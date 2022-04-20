@@ -65,7 +65,7 @@ public interface ElasticsearchWriteOptions extends PipelineOptions {
 
   @Description("Elastic search socket timeout. Default: 30 minutes")
   @Default.Integer(1800000)
-  Long getMaxSocketTimeout();
+  Integer getMaxSocketTimeout();
 
   void setMaxSocketTimeout(Integer maxSocketTimeout);
 
