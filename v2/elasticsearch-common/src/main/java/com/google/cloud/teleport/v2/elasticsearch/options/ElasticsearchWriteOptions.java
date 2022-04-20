@@ -63,6 +63,12 @@ public interface ElasticsearchWriteOptions extends PipelineOptions {
 
   void setBatchSizeBytes(Long batchSizeBytes);
 
+  @Description("Elastic search socket timeout. Default: 30 minutes")
+  @Default.Long(1800000)
+  Long getMaxSocketTimeout();
+
+  void setMaxSocketTimeout(Long maxSocketTimeout);
+
   @Description("Optional: Max retry attempts, must be > 0, ex: 3. Default: no retries")
   Integer getMaxRetryAttempts();
 
@@ -73,4 +79,5 @@ public interface ElasticsearchWriteOptions extends PipelineOptions {
   Long getMaxRetryDuration();
 
   void setMaxRetryDuration(Long maxRetryDuration);
+
 }
