@@ -482,8 +482,12 @@ public class ElasticsearchIO {
 
         AccessSecretVersionResponse response = client.accessSecretVersion(secretVersionName);
         String plainTextSecret = response.getPayload().getData().toStringUtf8();
+        URL url = new URL(plainTextSecret);
+        String userInfo = url.getUserInfo();
+
+        String[] userInfoArray = userInfo.split(":");        
         restClientBuilder.setDefaultHeaders(
-            new Header[] {new BasicHeader("Authorization", "ApiKey " + plainTextSecret)});
+            new Header[] {new BasicHeader("Authorization", "ApiKey " + userInfoArray[1])});
       }
       if (getBearerToken() != null) {
         restClientBuilder.setDefaultHeaders(
