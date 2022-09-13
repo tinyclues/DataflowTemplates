@@ -96,6 +96,7 @@ import org.joda.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.cloud.ServiceOptions;
 import com.google.cloud.secretmanager.v1.AccessSecretVersionResponse;
 import com.google.cloud.secretmanager.v1.SecretManagerServiceClient;
 import com.google.cloud.secretmanager.v1.SecretVersionName;
@@ -475,7 +476,7 @@ public class ElasticsearchIO {
       }
       if (getApiKey() != null) {
         SecretManagerServiceClient client = SecretManagerServiceClient.create();
-        String projectId = "tinyclues-data";
+        String projectId = ServiceOptions.getDefaultProjectId();
         String secretId = getApiKey();
         String versionId = "latest";
         SecretVersionName secretVersionName = SecretVersionName.of(projectId, secretId, versionId);
