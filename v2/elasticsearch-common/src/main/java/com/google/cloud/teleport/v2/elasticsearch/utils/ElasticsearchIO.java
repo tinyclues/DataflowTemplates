@@ -96,6 +96,12 @@ import org.joda.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.cloud.ServiceOptions;
+import com.google.cloud.secretmanager.v1.AccessSecretVersionResponse;
+import com.google.cloud.secretmanager.v1.SecretManagerServiceClient;
+import com.google.cloud.secretmanager.v1.SecretVersionName;
+
+
 /**
  * Transforms for reading and writing data from/to Elasticsearch.
  *
@@ -469,8 +475,20 @@ public class ElasticsearchIO {
                 httpAsyncClientBuilder.setDefaultCredentialsProvider(credentialsProvider));
       }
       if (getApiKey() != null) {
+        SecretManagerServiceClient client = SecretManagerServiceClient.create();
+        String projectId = ServiceOptions.getDefaultProjectId();
+        String secretId = getApiKey();
+        String versionId = "latest";
+        SecretVersionName secretVersionName = SecretVersionName.of(projectId, secretId, versionId);
+
+        AccessSecretVersionResponse response = client.accessSecretVersion(secretVersionName);
+        String plainTextSecret = response.getPayload().getData().toStringUtf8();
+        URL url = new URL(plainTextSecret);
+        String userInfo = url.getUserInfo();
+
+        String[] userInfoArray = userInfo.split(":");        
         restClientBuilder.setDefaultHeaders(
-            new Header[] {new BasicHeader("Authorization", "ApiKey " + getApiKey())});
+            new Header[] {new BasicHeader("Authorization", "ApiKey " + userInfoArray[1])});
       }
       if (getBearerToken() != null) {
         restClientBuilder.setDefaultHeaders(
