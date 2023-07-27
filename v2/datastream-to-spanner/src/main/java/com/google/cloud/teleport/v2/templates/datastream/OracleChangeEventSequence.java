@@ -34,7 +34,7 @@ class OracleChangeEventSequence extends ChangeEventSequence {
   private final Long scn;
 
   OracleChangeEventSequence(Long timestamp, Long scn) {
-    super("oracle");
+    super(DatastreamConstants.ORACLE_SOURCE_TYPE);
     this.timestamp = timestamp;
     this.scn = scn;
   }
@@ -52,7 +52,7 @@ class OracleChangeEventSequence extends ChangeEventSequence {
 
     scn =
         ChangeEventTypeConvertor.toLong(
-            ctx.getChangeEvent(), DatastreamConstants.ORACLE_SCN_KEY, /*requiredField=*/ false);
+            ctx.getChangeEvent(), DatastreamConstants.ORACLE_SCN_KEY, /* requiredField= */ false);
     if (scn == null) {
       scn = new Long(-1);
     }
@@ -62,7 +62,7 @@ class OracleChangeEventSequence extends ChangeEventSequence {
         ChangeEventTypeConvertor.toLong(
             ctx.getChangeEvent(),
             DatastreamConstants.ORACLE_TIMESTAMP_KEY,
-            /*requiredField=*/ true),
+            /* requiredField= */ true),
         scn);
   }
 

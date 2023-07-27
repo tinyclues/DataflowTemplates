@@ -17,22 +17,30 @@
 package main
 
 import (
+	"flag"
 	"log"
 
+	"github.com/GoogleCloudPlatform/DataflowTemplates/cicd/internal/flags"
 	"github.com/GoogleCloudPlatform/DataflowTemplates/cicd/internal/workflows"
 )
 
 func main() {
+	flags.RegisterCommonFlags()
+	flag.Parse()
+
 	mvnFlags := workflows.NewMavenFlags()
-	err := workflows.MvnCleanInstall().Run(
+	err := workflows.MvnCleanVerify().Run(
 		mvnFlags.IncludeDependencies(),
 		mvnFlags.IncludeDependents(),
 		mvnFlags.SkipCheckstyle(),
-		mvnFlags.SkipDependencyAnalysis(),
 		mvnFlags.SkipJib(),
-		mvnFlags.FailAtTheEnd())
+		mvnFlags.SkipShade(),
+		mvnFlags.SkipSpotlessCheck(),
+		mvnFlags.SkipIntegrationTests(),
+		mvnFlags.FailAtTheEnd(),
+		mvnFlags.ThreadCount(8))
 	if err != nil {
 		log.Fatalf("%v\n", err)
 	}
-	log.Println("Build Successful!")
+	log.Println("Verification Successful!")
 }

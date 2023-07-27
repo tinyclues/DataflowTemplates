@@ -27,7 +27,6 @@
     <artifactId>file-format-conversion</artifactId>
 
     <properties>
-        <avro.version>1.8.2</avro.version>
         <google-storage-api.version>v1-rev20200611-1.30.10</google-storage-api.version>
         <commons-csv.version>1.8</commons-csv.version>
     </properties>
@@ -36,25 +35,15 @@
         <dependency>
             <groupId>com.google.cloud.teleport.v2</groupId>
             <artifactId>common</artifactId>
-            <version>1.0-SNAPSHOT</version>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- Testing -->
+        <dependency>
+            <groupId>com.google.cloud.teleport</groupId>
+            <artifactId>it-google-cloud-platform</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
-    <build>
-        <directory>${mvn-target-dir}</directory>
-        <plugins>
-            <plugin>
-                <groupId>com.google.cloud.tools</groupId>
-                <artifactId>jib-maven-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>build</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-        </plugins>
-    </build>
 </project>

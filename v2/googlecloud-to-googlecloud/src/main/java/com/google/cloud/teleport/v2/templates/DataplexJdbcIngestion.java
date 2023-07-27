@@ -15,6 +15,7 @@
  */
 package com.google.cloud.teleport.v2.templates;
 
+import static com.google.cloud.teleport.v2.utils.KMSUtils.maybeDecrypt;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.api.services.bigquery.model.TableRow;
@@ -23,15 +24,17 @@ import com.google.api.services.dataplex.v1.model.GoogleCloudDataplexV1Entity;
 import com.google.api.services.dataplex.v1.model.GoogleCloudDataplexV1Schema;
 import com.google.api.services.dataplex.v1.model.GoogleCloudDataplexV1SchemaPartitionField;
 import com.google.api.services.dataplex.v1.model.GoogleCloudDataplexV1StorageFormat;
+import com.google.cloud.teleport.metadata.Template;
+import com.google.cloud.teleport.metadata.TemplateCategory;
 import com.google.cloud.teleport.v2.clients.DataplexClient;
 import com.google.cloud.teleport.v2.clients.DataplexClientFactory;
 import com.google.cloud.teleport.v2.clients.DefaultDataplexClient;
-import com.google.cloud.teleport.v2.io.DynamicJdbcIO;
-import com.google.cloud.teleport.v2.io.DynamicJdbcIO.DynamicDataSourceConfiguration;
+import com.google.cloud.teleport.v2.common.UncaughtExceptionLogger;
 import com.google.cloud.teleport.v2.options.DataplexJdbcIngestionOptions;
 import com.google.cloud.teleport.v2.transforms.BeamRowToGenericRecordFn;
 import com.google.cloud.teleport.v2.transforms.DataplexJdbcIngestionUpdateMetadata;
 import com.google.cloud.teleport.v2.transforms.GenericRecordsToGcsPartitioned;
+import com.google.cloud.teleport.v2.utils.BigQueryIOUtils;
 import com.google.cloud.teleport.v2.utils.DataplexJdbcIngestionFilter;
 import com.google.cloud.teleport.v2.utils.DataplexJdbcIngestionNaming;
 import com.google.cloud.teleport.v2.utils.DataplexUtils;
@@ -40,7 +43,6 @@ import com.google.cloud.teleport.v2.utils.JdbcConverters;
 import com.google.cloud.teleport.v2.utils.JdbcIngestionWriteDisposition.MapWriteDisposition;
 import com.google.cloud.teleport.v2.utils.JdbcIngestionWriteDisposition.WriteDispositionException;
 import com.google.cloud.teleport.v2.utils.JdbcIngestionWriteDisposition.WriteDispositionOptions;
-import com.google.cloud.teleport.v2.utils.KMSEncryptedNestedValue;
 import com.google.cloud.teleport.v2.utils.Schemas;
 import com.google.cloud.teleport.v2.values.DataplexCompression;
 import com.google.cloud.teleport.v2.values.DataplexEnums.DataplexAssetResourceSpec;
@@ -56,11 +58,12 @@ import java.util.stream.Collectors;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.coders.AvroCoder;
-import org.apache.beam.sdk.coders.RowCoder;
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO;
 import org.apache.beam.sdk.io.gcp.bigquery.TableRowJsonCoder;
-import org.apache.beam.sdk.io.jdbc.BeamSchemaUtil;
+import org.apache.beam.sdk.io.jdbc.JdbcIO;
+import org.apache.beam.sdk.io.jdbc.JdbcIO.DataSourceConfiguration;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
+import org.apache.beam.sdk.options.ValueProvider.StaticValueProvider;
 import org.apache.beam.sdk.schemas.Schema;
 import org.apache.beam.sdk.schemas.utils.AvroUtils;
 import org.apache.beam.sdk.transforms.Distinct;
@@ -80,8 +83,28 @@ import org.slf4j.LoggerFactory;
  * <p>Accepts a Dataplex asset as the destination, which will be resolved to the corresponding
  * BigQuery dataset/Storage bucket via Dataplex API.
  *
- * <p>TODO: add more comments later
+ * <p>Check out <a
+ * href="https://github.com/GoogleCloudPlatform/DataflowTemplates/blob/main/v2/googlecloud-to-googlecloud/README_Dataplex_JDBC_Ingestion.md">README</a>
+ * for instructions on how to use or modify this template.
  */
+@Template(
+    name = "Dataplex_JDBC_Ingestion",
+    category = TemplateCategory.BATCH,
+    displayName = "Dataplex JDBC Ingestion",
+    description =
+        "A pipeline that reads from a JDBC source and writes to to a Dataplex asset, which can be"
+            + " either a BigQuery dataset or a Cloud Storage bucket. JDBC connection string, user"
+            + " name and password can be passed in directly as plaintext or encrypted using the"
+            + " Google Cloud KMS API.  If the parameter KMSEncryptionKey is specified,"
+            + " connectionURL, username, and password should be all in encrypted format. A sample"
+            + " curl command for the KMS API encrypt endpoint: curl -s -X POST"
+            + " \"https://cloudkms.googleapis.com/v1/projects/your-project/locations/your-path/keyRings/your-keyring/cryptoKeys/your-key:encrypt\""
+            + "  -d \"{\\\"plaintext\\\":\\\"PasteBase64EncodedString\\\"}\"  -H \"Authorization:"
+            + " Bearer $(gcloud auth application-default print-access-token)\"  -H \"Content-Type:"
+            + " application/json\"",
+    optionsClass = DataplexJdbcIngestionOptions.class,
+    flexContainerName = "dataplex-jdbc-ingestion",
+    contactInformation = "https://cloud.google.com/support")
 public class DataplexJdbcIngestion {
 
   /* Logger for class.*/
@@ -95,20 +118,20 @@ public class DataplexJdbcIngestion {
   /** The tag for existing target file names. */
   private static final TupleTag<String> EXISTING_TARGET_FILES_OUT = new TupleTag<String>() {};
 
-  private static KMSEncryptedNestedValue maybeDecrypt(String unencryptedValue, String kmsKey) {
-    return new KMSEncryptedNestedValue(unencryptedValue, kmsKey);
-  }
-
   /**
    * Main entry point for pipeline execution.
    *
    * @param args Command line arguments to the pipeline.
    */
   public static void main(String[] args) throws IOException {
+    UncaughtExceptionLogger.register();
+
     DataplexJdbcIngestionOptions options =
         PipelineOptionsFactory.fromArgs(args)
             .withValidation()
             .as(DataplexJdbcIngestionOptions.class);
+
+    BigQueryIOUtils.validateBQStorageApiOptionsBatch(options);
 
     Pipeline pipeline = Pipeline.create(options);
 
@@ -116,7 +139,7 @@ public class DataplexJdbcIngestion {
     String assetName = options.getOutputAsset();
     GoogleCloudDataplexV1Asset asset = resolveAsset(assetName, dataplex);
 
-    DynamicDataSourceConfiguration dataSourceConfig = configDataSource(options);
+    DataSourceConfiguration dataSourceConfig = configDataSource(options);
     String assetType = asset.getResourceSpec().getType();
     if (DataplexAssetResourceSpec.BIGQUERY_DATASET.name().equals(assetType)) {
       buildBigQueryPipeline(pipeline, options, dataSourceConfig);
@@ -251,7 +274,7 @@ public class DataplexJdbcIngestion {
   static void buildBigQueryPipeline(
       Pipeline pipeline,
       DataplexJdbcIngestionOptions options,
-      DynamicDataSourceConfiguration dataSourceConfig) {
+      DataSourceConfiguration dataSourceConfig) {
 
     if (options.getUpdateDataplexMetadata()) {
       LOG.warn("Dataplex metadata updates enabled, but not supported for BigQuery targets.");
@@ -260,11 +283,11 @@ public class DataplexJdbcIngestion {
     pipeline
         .apply(
             "Read from JdbcIO",
-            DynamicJdbcIO.<TableRow>read()
+            JdbcIO.<TableRow>read()
                 .withDataSourceConfiguration(dataSourceConfig)
                 .withQuery(options.getQuery())
                 .withCoder(TableRowJsonCoder.of())
-                .withRowMapper(JdbcConverters.getResultSetToTableRow()))
+                .withRowMapper(JdbcConverters.getResultSetToTableRow(options.getUseColumnAlias())))
         .apply(
             "Write to BigQuery",
             BigQueryIO.writeTableRows()
@@ -281,7 +304,7 @@ public class DataplexJdbcIngestion {
   static void buildGcsPipeline(
       Pipeline pipeline,
       DataplexJdbcIngestionOptions options,
-      DynamicDataSourceConfiguration dataSourceConfig,
+      DataSourceConfiguration dataSourceConfig,
       String targetRootPath,
       DataplexClient dataplex,
       DataplexClientFactory dcf)
@@ -297,11 +320,9 @@ public class DataplexJdbcIngestion {
     PCollection<Row> resultRows =
         pipeline.apply(
             "Read from JdbcIO",
-            DynamicJdbcIO.<Row>read()
+            JdbcIO.readRows()
                 .withDataSourceConfiguration(dataSourceConfig)
-                .withQuery(options.getQuery())
-                .withCoder(RowCoder.of(beamSchema))
-                .withRowMapper(BeamSchemaUtil.of(beamSchema)));
+                .withQuery(options.getQuery()));
     // Convert Beam Row to GenericRecord
     PCollection<GenericRecord> genericRecords =
         resultRows
@@ -460,13 +481,19 @@ public class DataplexJdbcIngestion {
     return DataplexUtils.storageFormat(options.getFileFormat(), DataplexCompression.SNAPPY);
   }
 
-  static DynamicDataSourceConfiguration configDataSource(DataplexJdbcIngestionOptions options) {
-    return DynamicJdbcIO.DynamicDataSourceConfiguration.create(
-            options.getDriverClassName(),
-            maybeDecrypt(options.getConnectionURL(), options.getKMSEncryptionKey()))
-        .withUsername(maybeDecrypt(options.getUsername(), options.getKMSEncryptionKey()))
-        .withPassword(maybeDecrypt(options.getPassword(), options.getKMSEncryptionKey()))
-        .withDriverJars(options.getDriverJars())
-        .withConnectionProperties(options.getConnectionProperties());
+  static DataSourceConfiguration configDataSource(DataplexJdbcIngestionOptions options) {
+    JdbcIO.DataSourceConfiguration dataSourceConfiguration =
+        JdbcIO.DataSourceConfiguration.create(
+                StaticValueProvider.of(options.getDriverClassName()),
+                maybeDecrypt(options.getConnectionURL(), options.getKMSEncryptionKey()))
+            .withUsername(maybeDecrypt(options.getUsername(), options.getKMSEncryptionKey()))
+            .withPassword(maybeDecrypt(options.getPassword(), options.getKMSEncryptionKey()))
+            .withDriverJars(options.getDriverJars());
+
+    if (options.getConnectionProperties() != null) {
+      dataSourceConfiguration =
+          dataSourceConfiguration.withConnectionProperties(options.getConnectionProperties());
+    }
+    return dataSourceConfiguration;
   }
 }

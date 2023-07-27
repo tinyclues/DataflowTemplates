@@ -25,6 +25,7 @@ import com.google.cloud.spanner.Options.RpcPriority;
 import com.google.cloud.teleport.v2.options.SpannerChangeStreamsToGcsOptions;
 import com.google.cloud.teleport.v2.spanner.IntegrationTest;
 import com.google.cloud.teleport.v2.spanner.SpannerServerResource;
+import com.google.cloud.teleport.v2.spanner.SpannerTestHelper;
 import com.google.cloud.teleport.v2.transforms.FileFormatFactorySpannerChangeStreams;
 import com.google.cloud.teleport.v2.utils.DurationUtils;
 import com.google.cloud.teleport.v2.utils.WriteToGCSUtility.FileFormat;
@@ -45,7 +46,7 @@ import org.apache.beam.sdk.transforms.SerializableFunction;
 import org.apache.beam.sdk.transforms.windowing.FixedWindows;
 import org.apache.beam.sdk.transforms.windowing.Window;
 import org.apache.beam.sdk.values.PCollection;
-import org.apache.commons.lang3.RandomStringUtils;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -57,7 +58,7 @@ import org.junit.runners.JUnit4;
 
 /** Test class for {@link SpannerChangeStreamsToGcsTest}. */
 @RunWith(JUnit4.class)
-public final class SpannerChangeStreamsToGcsTest {
+public final class SpannerChangeStreamsToGcsTest extends SpannerTestHelper {
 
   /** Rule for exception testing. */
   @Rule public ExpectedException exception = ExpectedException.none();
@@ -73,27 +74,37 @@ public final class SpannerChangeStreamsToGcsTest {
   private static final String AVRO_FILENAME_PREFIX = "avro-output-";
   private static final String TEXT_FILENAME_PREFIX = "text-output-";
   private static final Integer NUM_SHARDS = 1;
+  private static final String TEST_LABEL = "cs2gcs";
   private static final String TEST_PROJECT = "span-cloud-testing";
-  private static final String TEST_INSTANCE = "changestream";
-  private static final String TEST_DATABASE_PREFIX = "testdbchangestreams";
+  private static final String TEST_INSTANCE = "change-stream-test";
   private static final String TEST_TABLE = "Users";
   private static final String TEST_CHANGE_STREAM = "UsersStream";
-  private static final int MAX_TABLE_NAME_LENGTH = 29;
 
   private static String fakeDir;
   private static String fakeTempLocation;
   private static final String FILENAME_PREFIX = "filenamePrefix";
 
+  public SpannerChangeStreamsToGcsTest() {
+    super(TEST_LABEL);
+  }
+
   @Before
   public void setup() throws Exception {
     fakeDir = tmpDir.newFolder("output").getAbsolutePath();
     fakeTempLocation = tmpDir.newFolder("temporaryLocation").getAbsolutePath();
+    super.setUp();
+  }
+
+  @After
+  public void tearDown() throws NoSuchFieldException, IllegalAccessException {
+    super.tearDown();
   }
 
   @SuppressWarnings("DefaultAnnotationParam")
   private static class VerifyDataChangeRecordAvro
       implements SerializableFunction<
           Iterable<com.google.cloud.teleport.v2.DataChangeRecord>, Void> {
+
     @Override
     public Void apply(Iterable<com.google.cloud.teleport.v2.DataChangeRecord> actualIter) {
       // Make sure actual is the right length, and is a
@@ -122,6 +133,7 @@ public final class SpannerChangeStreamsToGcsTest {
   @SuppressWarnings("DefaultAnnotationParam")
   private static class VerifyDataChangeRecordText
       implements SerializableFunction<Iterable<String>, Void> {
+
     @Override
     public Void apply(Iterable<String> actualIter) {
       // Make sure actual is the right length, and is a
@@ -145,19 +157,14 @@ public final class SpannerChangeStreamsToGcsTest {
     }
   }
 
-  private String generateDatabaseName() {
-    return TEST_DATABASE_PREFIX
-        + "_"
-        + RandomStringUtils.randomNumeric(
-            MAX_TABLE_NAME_LENGTH - 1 - TEST_DATABASE_PREFIX.length());
-  }
-
   /**
-   * Test whether {@link FileFormatFactory} maps the output file format to the transform to be
-   * carried out. And throws illegal argument exception if invalid file format is passed.
+   * Test whether {@link FileFormatFactorySpannerChangeStreams} maps the output file format to the
+   * transform to be carried out. And throws illegal argument exception if invalid file format is
+   * passed.
    */
   @Test
   public void testFileFormatFactoryInvalid() {
+    mockGetDialect();
 
     exception.expect(IllegalArgumentException.class);
     exception.expectMessage("Invalid output format:PARQUET. Supported output formats: TEXT, AVRO");
@@ -174,18 +181,14 @@ public final class SpannerChangeStreamsToGcsTest {
 
     Timestamp startTimestamp = Timestamp.now();
     Timestamp endTimestamp = Timestamp.now();
+    SpannerConfig spannerConfig = getFakeSpannerConfig();
 
     p
         // Reads from the change stream
         .apply(
             SpannerIO.readChangeStream()
-                .withSpannerConfig(
-                    SpannerConfig.create()
-                        .withProjectId("project")
-                        .withInstanceId("instance")
-                        .withDatabaseId("db"))
-                .withMetadataInstance("instance")
-                .withMetadataDatabase("db")
+                .withSpannerConfig(spannerConfig)
+                .withMetadataDatabase(spannerConfig.getDatabaseId().get())
                 .withChangeStreamName("changestream")
                 .withInclusiveStartAt(startTimestamp)
                 .withInclusiveEndAt(endTimestamp)
@@ -202,6 +205,8 @@ public final class SpannerChangeStreamsToGcsTest {
 
   @Test
   public void testInvalidWindowDuration() {
+    mockGetDialect();
+
     exception.expect(IllegalArgumentException.class);
     exception.expectMessage("The window duration must be greater than 0!");
     SpannerChangeStreamsToGcsOptions options =
@@ -217,18 +222,14 @@ public final class SpannerChangeStreamsToGcsTest {
 
     Timestamp startTimestamp = Timestamp.now();
     Timestamp endTimestamp = Timestamp.now();
+    SpannerConfig spannerConfig = getFakeSpannerConfig();
 
     p
         // Reads from the change stream
         .apply(
             SpannerIO.readChangeStream()
-                .withSpannerConfig(
-                    SpannerConfig.create()
-                        .withProjectId("project")
-                        .withInstanceId("instance")
-                        .withDatabaseId("db"))
-                .withMetadataInstance("instance")
-                .withMetadataDatabase("db")
+                .withSpannerConfig(spannerConfig)
+                .withMetadataDatabase(spannerConfig.getDatabaseId().get())
                 .withChangeStreamName("changestream")
                 .withInclusiveStartAt(startTimestamp)
                 .withInclusiveEndAt(endTimestamp)
@@ -249,14 +250,20 @@ public final class SpannerChangeStreamsToGcsTest {
   // mvn -Dexcluded.spanner.tests="" -Dtest=SpannerChangeStreamsToGcsTest test
   public void testWriteToGCSAvro() throws Exception {
     // Create a test database.
-    String testDatabase = generateDatabaseName();
+    String testSuffix = generateUniqueTestSuffix();
+    String testDatabase = testDatabasePrefix + "_" + testSuffix;
+    String testMetadataDatabase = testMetadatadbPrefix + "_" + testSuffix;
     fakeDir = tmpDir.newFolder("output").getAbsolutePath();
     fakeTempLocation = tmpDir.newFolder("temporaryLocation").getAbsolutePath();
 
+    spannerServer.dropDatabase(testMetadataDatabase);
     spannerServer.dropDatabase(testDatabase);
 
-    // Create a table.
+    // Create metadata DB.
     List<String> statements = new ArrayList<String>();
+    spannerServer.createDatabase(testMetadataDatabase, statements);
+
+    // Create primary DB with table and change stream.
     final String createTable =
         "CREATE TABLE "
             + TEST_TABLE
@@ -264,59 +271,189 @@ public final class SpannerChangeStreamsToGcsTest {
             + "user_id INT64 NOT NULL,"
             + "name STRING(MAX) "
             + ") PRIMARY KEY(user_id)";
-    final String createChangeStream = "CREATE CHANGE STREAM " + TEST_CHANGE_STREAM + " FOR Users";
+    final String createChangeStream =
+        "CREATE CHANGE STREAM " + TEST_CHANGE_STREAM + " FOR " + TEST_TABLE;
     statements.add(createTable);
     statements.add(createChangeStream);
     spannerServer.createDatabase(testDatabase, statements);
 
-    Timestamp startTimestamp = Timestamp.now();
+    try {
 
-    // Create a mutation for the table that will generate 1 data change record.
-    List<Mutation> mutations = new ArrayList<>();
-    mutations.add(
-        Mutation.newInsertBuilder(TEST_TABLE).set("user_id").to(1).set("name").to("Name1").build());
-    mutations.add(
-        Mutation.newInsertBuilder(TEST_TABLE).set("user_id").to(2).set("name").to("Name2").build());
+      Timestamp startTimestamp = Timestamp.now();
 
-    spannerServer.getDbClient(testDatabase).write(mutations);
+      // Create a mutation for the table that will generate 1 data change record.
+      List<Mutation> mutations = new ArrayList<>();
+      mutations.add(
+          Mutation.newInsertBuilder(TEST_TABLE)
+              .set("user_id")
+              .to(1)
+              .set("name")
+              .to("Name1")
+              .build());
+      mutations.add(
+          Mutation.newInsertBuilder(TEST_TABLE)
+              .set("user_id")
+              .to(2)
+              .set("name")
+              .to("Name2")
+              .build());
 
-    Timestamp endTimestamp = Timestamp.now();
+      spannerServer.getDbClient(testDatabase).write(mutations);
 
-    SpannerChangeStreamsToGcsOptions options =
-        PipelineOptionsFactory.create().as(SpannerChangeStreamsToGcsOptions.class);
-    options.setSpannerProjectId(TEST_PROJECT);
-    options.setSpannerInstanceId(TEST_INSTANCE);
-    options.setSpannerDatabase(testDatabase);
-    options.setSpannerMetadataInstanceId(TEST_INSTANCE);
-    options.setSpannerMetadataDatabase(testDatabase);
-    options.setSpannerChangeStreamName(TEST_CHANGE_STREAM);
+      Timestamp endTimestamp = Timestamp.now();
 
-    options.setStartTimestamp(startTimestamp.toString());
-    options.setEndTimestamp(endTimestamp.toString());
-    List<String> experiments = new ArrayList<String>();
-    options.setExperiments(experiments);
+      SpannerChangeStreamsToGcsOptions options =
+          PipelineOptionsFactory.create().as(SpannerChangeStreamsToGcsOptions.class);
+      options.setSpannerProjectId(TEST_PROJECT);
+      options.setSpannerInstanceId(TEST_INSTANCE);
+      options.setSpannerDatabase(testDatabase);
+      options.setSpannerMetadataInstanceId(TEST_INSTANCE);
+      options.setSpannerMetadataDatabase(testMetadataDatabase);
+      options.setSpannerChangeStreamName(TEST_CHANGE_STREAM);
 
-    options.setOutputFileFormat(FileFormat.AVRO);
-    options.setGcsOutputDirectory(fakeDir);
-    options.setOutputFilenamePrefix(AVRO_FILENAME_PREFIX);
-    options.setNumShards(NUM_SHARDS);
-    options.setTempLocation(fakeTempLocation);
+      options.setStartTimestamp(startTimestamp.toString());
+      options.setEndTimestamp(endTimestamp.toString());
+      List<String> experiments = new ArrayList<String>();
+      options.setExperiments(experiments);
 
-    // Run the pipeline.
-    PipelineResult result = run(options);
-    result.waitUntilFinish();
+      options.setOutputFileFormat(FileFormat.AVRO);
+      options.setGcsOutputDirectory(fakeDir);
+      options.setOutputFilenamePrefix(AVRO_FILENAME_PREFIX);
+      options.setNumShards(NUM_SHARDS);
+      options.setTempLocation(fakeTempLocation);
 
-    // Read from the output Avro file to assert that 1 data change record has been generated.
-    PCollection<com.google.cloud.teleport.v2.DataChangeRecord> dataChangeRecords =
-        pipeline.apply(
-            "readRecords",
-            AvroIO.read(com.google.cloud.teleport.v2.DataChangeRecord.class)
-                .from(fakeDir + "/avro-output-*.avro"));
-    PAssert.that(dataChangeRecords).satisfies(new VerifyDataChangeRecordAvro());
-    pipeline.run();
+      // Run the pipeline.
+      PipelineResult result = run(options);
+      result.waitUntilFinish();
 
-    // Drop the database.
+      // Read from the output Avro file to assert that 1 data change record has been generated.
+      PCollection<com.google.cloud.teleport.v2.DataChangeRecord> dataChangeRecords =
+          pipeline.apply(
+              "readRecords",
+              AvroIO.read(com.google.cloud.teleport.v2.DataChangeRecord.class)
+                  .from(fakeDir + "/avro-output-*.avro"));
+      PAssert.that(dataChangeRecords).satisfies(new VerifyDataChangeRecordAvro());
+      pipeline.run();
+    } finally {
+      // Drop the database.
+      spannerServer.dropDatabase(testDatabase);
+      // Drop the metadata database.
+      spannerServer.dropDatabase(testMetadataDatabase);
+    }
+  }
+
+  @Test
+  @Category(IntegrationTest.class)
+  // This test can only be run locally with the following command:
+  // mvn -Dexcluded.spanner.tests="" -Dtest=SpannerChangeStreamsToGcsTest test
+  public void testWriteToGCSAvroWithDatabaseRole() throws Exception {
+    // Create a test database.
+    String testSuffix = generateUniqueTestSuffix();
+    String testDatabase = testDatabasePrefix + "_" + testSuffix;
+    String testMetadataDatabase = testMetadatadbPrefix + "_" + testSuffix;
+    fakeDir = tmpDir.newFolder("output").getAbsolutePath();
+    fakeTempLocation = tmpDir.newFolder("temporaryLocation").getAbsolutePath();
+
+    spannerServer.dropDatabase(testMetadataDatabase);
     spannerServer.dropDatabase(testDatabase);
+
+    // Define test role.
+    final String testRole = "test_role";
+
+    // Create metadata DB.
+    List<String> statements = new ArrayList<String>();
+    spannerServer.createDatabase(testMetadataDatabase, statements);
+
+    // Create primary DB with table, change stream, role etc.
+    final String createTable =
+        "CREATE TABLE "
+            + TEST_TABLE
+            + " ("
+            + "user_id INT64 NOT NULL,"
+            + "name STRING(MAX) "
+            + ") PRIMARY KEY(user_id)";
+    final String createChangeStream =
+        "CREATE CHANGE STREAM " + TEST_CHANGE_STREAM + " FOR " + TEST_TABLE;
+
+    // Set up roles and privileges.
+    final String createRole = "CREATE ROLE " + testRole;
+    final String grantCSPrivilege =
+        "GRANT SELECT ON CHANGE STREAM " + TEST_CHANGE_STREAM + " TO ROLE " + testRole;
+    final String grantTVFPrivilege =
+        "GRANT EXECUTE ON TABLE FUNCTION READ_" + TEST_CHANGE_STREAM + " TO ROLE " + testRole;
+    statements.add(createTable);
+    statements.add(createChangeStream);
+    statements.add(createRole);
+    statements.add(grantCSPrivilege);
+    statements.add(grantTVFPrivilege);
+
+    spannerServer.createDatabase(testDatabase, statements);
+
+    try {
+
+      Timestamp startTimestamp = Timestamp.now();
+
+      // Create a mutation for the table that will generate 1 data change record.
+      List<Mutation> mutations = new ArrayList<>();
+      mutations.add(
+          Mutation.newInsertBuilder(TEST_TABLE)
+              .set("user_id")
+              .to(1)
+              .set("name")
+              .to("Name1")
+              .build());
+      mutations.add(
+          Mutation.newInsertBuilder(TEST_TABLE)
+              .set("user_id")
+              .to(2)
+              .set("name")
+              .to("Name2")
+              .build());
+
+      spannerServer.getDbClient(testDatabase).write(mutations);
+
+      Timestamp endTimestamp = Timestamp.now();
+
+      SpannerChangeStreamsToGcsOptions options =
+          PipelineOptionsFactory.create().as(SpannerChangeStreamsToGcsOptions.class);
+      options.setSpannerHost(spannerServer.getSpannerConfig(testDatabase).getHost().get());
+      options.setSpannerProjectId(TEST_PROJECT);
+      options.setSpannerInstanceId(TEST_INSTANCE);
+      options.setSpannerDatabase(testDatabase);
+      options.setSpannerMetadataInstanceId(TEST_INSTANCE);
+      options.setSpannerMetadataDatabase(testMetadataDatabase);
+      options.setSpannerChangeStreamName(TEST_CHANGE_STREAM);
+      options.setSpannerDatabaseRole(testRole);
+
+      options.setStartTimestamp(startTimestamp.toString());
+      options.setEndTimestamp(endTimestamp.toString());
+      List<String> experiments = new ArrayList<String>();
+      options.setExperiments(experiments);
+
+      options.setOutputFileFormat(FileFormat.AVRO);
+      options.setGcsOutputDirectory(fakeDir);
+      options.setOutputFilenamePrefix(AVRO_FILENAME_PREFIX);
+      options.setNumShards(NUM_SHARDS);
+      options.setTempLocation(fakeTempLocation);
+
+      // Run the pipeline.
+      PipelineResult result = run(options);
+      result.waitUntilFinish();
+
+      // Read from the output Avro file to assert that 1 data change record has been generated.
+      PCollection<com.google.cloud.teleport.v2.DataChangeRecord> dataChangeRecords =
+          pipeline.apply(
+              "readRecords",
+              AvroIO.read(com.google.cloud.teleport.v2.DataChangeRecord.class)
+                  .from(fakeDir + "/avro-output-*.avro"));
+      PAssert.that(dataChangeRecords).satisfies(new VerifyDataChangeRecordAvro());
+      pipeline.run();
+    } finally {
+      // Drop the primary database.
+      spannerServer.dropDatabase(testDatabase);
+      // Drop the metadata database.
+      spannerServer.dropDatabase(testMetadataDatabase);
+    }
   }
 
   @Test
@@ -325,14 +462,20 @@ public final class SpannerChangeStreamsToGcsTest {
   // mvn -Dexcluded.spanner.tests="" -Dtest=SpannerChangeStreamsToGcsTest test
   public void testWriteToGCSText() throws Exception {
     // Create a test database.
-    String testDatabase = generateDatabaseName();
+    String testSuffix = generateUniqueTestSuffix();
+    String testDatabase = testDatabasePrefix + "_" + testSuffix;
+    String testMetadataDatabase = testMetadatadbPrefix + "_" + testSuffix;
     fakeDir = tmpDir.newFolder("output").getAbsolutePath();
     fakeTempLocation = tmpDir.newFolder("temporaryLocation").getAbsolutePath();
 
+    spannerServer.dropDatabase(testMetadataDatabase);
     spannerServer.dropDatabase(testDatabase);
 
-    // Create a table.
+    // Create metadata DB.
     List<String> statements = new ArrayList<String>();
+    spannerServer.createDatabase(testMetadataDatabase, statements);
+
+    // Create primary DB with table and change stream.
     final String createTable =
         "CREATE TABLE "
             + TEST_TABLE
@@ -340,55 +483,72 @@ public final class SpannerChangeStreamsToGcsTest {
             + "user_id INT64 NOT NULL,"
             + "name STRING(MAX) "
             + ") PRIMARY KEY(user_id)";
-    final String createChangeStream = "CREATE CHANGE STREAM " + TEST_CHANGE_STREAM + " FOR Users";
+    final String createChangeStream =
+        "CREATE CHANGE STREAM " + TEST_CHANGE_STREAM + " FOR " + TEST_TABLE;
     statements.add(createTable);
     statements.add(createChangeStream);
     spannerServer.createDatabase(testDatabase, statements);
 
-    Timestamp startTimestamp = Timestamp.now();
+    try {
 
-    // Create a mutation for the table that will generate 1 data change record.
-    List<Mutation> mutations = new ArrayList<>();
-    mutations.add(
-        Mutation.newInsertBuilder(TEST_TABLE).set("user_id").to(1).set("name").to("Name1").build());
-    mutations.add(
-        Mutation.newInsertBuilder(TEST_TABLE).set("user_id").to(2).set("name").to("Name2").build());
+      Timestamp startTimestamp = Timestamp.now();
 
-    spannerServer.getDbClient(testDatabase).write(mutations);
+      // Create a mutation for the table that will generate 1 data change record.
+      List<Mutation> mutations = new ArrayList<>();
+      mutations.add(
+          Mutation.newInsertBuilder(TEST_TABLE)
+              .set("user_id")
+              .to(1)
+              .set("name")
+              .to("Name1")
+              .build());
+      mutations.add(
+          Mutation.newInsertBuilder(TEST_TABLE)
+              .set("user_id")
+              .to(2)
+              .set("name")
+              .to("Name2")
+              .build());
 
-    Timestamp endTimestamp = Timestamp.now();
+      spannerServer.getDbClient(testDatabase).write(mutations);
 
-    SpannerChangeStreamsToGcsOptions options =
-        PipelineOptionsFactory.create().as(SpannerChangeStreamsToGcsOptions.class);
-    options.setSpannerProjectId(TEST_PROJECT);
-    options.setSpannerInstanceId(TEST_INSTANCE);
-    options.setSpannerDatabase(testDatabase);
-    options.setSpannerMetadataInstanceId(TEST_INSTANCE);
-    options.setSpannerMetadataDatabase(testDatabase);
-    options.setSpannerChangeStreamName(TEST_CHANGE_STREAM);
+      Timestamp endTimestamp = Timestamp.now();
+      SpannerConfig spannerConfig = spannerServer.getSpannerConfig(testDatabase);
 
-    options.setStartTimestamp(startTimestamp.toString());
-    options.setEndTimestamp(endTimestamp.toString());
-    List<String> experiments = new ArrayList<String>();
-    options.setExperiments(experiments);
+      SpannerChangeStreamsToGcsOptions options =
+          PipelineOptionsFactory.create().as(SpannerChangeStreamsToGcsOptions.class);
+      options.setSpannerProjectId(TEST_PROJECT);
+      options.setSpannerInstanceId(TEST_INSTANCE);
+      options.setSpannerDatabase(testDatabase);
+      options.setSpannerMetadataInstanceId(spannerConfig.getInstanceId().get());
+      options.setSpannerMetadataDatabase(testMetadataDatabase);
+      options.setSpannerChangeStreamName(TEST_CHANGE_STREAM);
 
-    options.setOutputFileFormat(FileFormat.TEXT);
-    options.setGcsOutputDirectory(fakeDir);
-    options.setOutputFilenamePrefix(TEXT_FILENAME_PREFIX);
-    options.setNumShards(NUM_SHARDS);
-    options.setTempLocation(fakeTempLocation);
+      options.setStartTimestamp(startTimestamp.toString());
+      options.setEndTimestamp(endTimestamp.toString());
+      List<String> experiments = new ArrayList<String>();
+      options.setExperiments(experiments);
 
-    // Run the pipeline.
-    PipelineResult result = run(options);
-    result.waitUntilFinish();
+      options.setOutputFileFormat(FileFormat.TEXT);
+      options.setGcsOutputDirectory(fakeDir);
+      options.setOutputFilenamePrefix(TEXT_FILENAME_PREFIX);
+      options.setNumShards(NUM_SHARDS);
+      options.setTempLocation(fakeTempLocation);
 
-    // Read from the output Avro file to assert that 1 data change record has been generated.
-    PCollection<String> dataChangeRecords =
-        pipeline.apply("readRecords", TextIO.read().from(fakeDir + "/text-output-*.txt"));
-    PAssert.that(dataChangeRecords).satisfies(new VerifyDataChangeRecordText());
-    pipeline.run();
+      // Run the pipeline.
+      PipelineResult result = run(options);
+      result.waitUntilFinish();
 
-    // Drop the database.
-    spannerServer.dropDatabase(testDatabase);
+      // Read from the output Avro file to assert that 1 data change record has been generated.
+      PCollection<String> dataChangeRecords =
+          pipeline.apply("readRecords", TextIO.read().from(fakeDir + "/text-output-*.txt"));
+      PAssert.that(dataChangeRecords).satisfies(new VerifyDataChangeRecordText());
+      pipeline.run();
+    } finally {
+      // Drop the database.
+      spannerServer.dropDatabase(testDatabase);
+      // Drop the metadata database.
+      spannerServer.dropDatabase(testMetadataDatabase);
+    }
   }
 }

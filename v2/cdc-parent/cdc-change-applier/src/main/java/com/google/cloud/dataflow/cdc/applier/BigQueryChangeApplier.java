@@ -24,7 +24,6 @@ import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.coders.SerializableCoder;
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO;
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.CreateDisposition;
-import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.Method;
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition;
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryUtils;
 import org.apache.beam.sdk.schemas.Schema;
@@ -135,7 +134,6 @@ public class BigQueryChangeApplier extends PTransform<PCollection<Row>, PDone> {
         BigQueryIO.writeTableRows()
             .withCreateDisposition(CreateDisposition.CREATE_IF_NEEDED)
             .withWriteDisposition(WriteDisposition.WRITE_APPEND)
-            .withMethod(Method.STREAMING_INSERTS)
             .to(
                 new ChangelogTableDynamicDestinations(
                     changeLogDataset, gcpProjectId, schemaMapView)));
@@ -191,7 +189,9 @@ public class BigQueryChangeApplier extends PTransform<PCollection<Row>, PDone> {
               SerializableCoder.of(
                   TypeDescriptors.kvs(
                       TypeDescriptors.strings(), TypeDescriptor.of(BigQueryAction.class))))
-          .apply("IssueMergeStatements", ParDo.of(new BigQueryStatementIssuingFn(jobPrefix)));
+          .apply(
+              "IssueMergeStatements",
+              ParDo.of(new BigQueryStatementIssuingFn(jobPrefix, gcpProjectId)));
     }
     return PDone.in(p);
   }

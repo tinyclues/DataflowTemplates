@@ -17,7 +17,10 @@ package com.google.cloud.teleport.v2.elasticsearch.templates;
 
 import static org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Preconditions.checkArgument;
 
+import com.google.cloud.teleport.metadata.Template;
+import com.google.cloud.teleport.metadata.TemplateCategory;
 import com.google.cloud.teleport.v2.coders.FailsafeElementCoder;
+import com.google.cloud.teleport.v2.common.UncaughtExceptionLogger;
 import com.google.cloud.teleport.v2.elasticsearch.options.GCSToElasticsearchOptions;
 import com.google.cloud.teleport.v2.elasticsearch.transforms.WriteToElasticsearch;
 import com.google.cloud.teleport.v2.transforms.CsvConverters;
@@ -43,10 +46,22 @@ import org.slf4j.LoggerFactory;
  * The {@link GCSToElasticsearch} pipeline exports data from one or more CSV files in Cloud Storage
  * to Elasticsearch.
  *
- * <p>Please refer to <b><a href=
- * "https://github.com/GoogleCloudPlatform/DataflowTemplates/blob/master/v2/googlecloud-to-elasticsearch/docs/GCSToElasticsearch/README.md">
- * README.md</a></b> for further information.
+ * <p>Check out <a
+ * href="https://github.com/GoogleCloudPlatform/DataflowTemplates/blob/main/v2/googlecloud-to-elasticsearch/README_GCS_to_Elasticsearch.md">README</a>
+ * for instructions on how to use or modify this template.
  */
+@Template(
+    name = "GCS_to_Elasticsearch",
+    category = TemplateCategory.BATCH,
+    displayName = "Cloud Storage to Elasticsearch",
+    description =
+        "A pipeline to ingest csv files from Cloud Storage and writes each line into Elasticsearch"
+            + " as a json document.",
+    optionsClass = GCSToElasticsearchOptions.class,
+    flexContainerName = "gcs-to-elasticsearch",
+    documentation =
+        "https://cloud.google.com/dataflow/docs/guides/templates/provided/cloud-storage-to-elasticsearch",
+    contactInformation = "https://cloud.google.com/support")
 public class GCSToElasticsearch {
 
   /** The tag for the headers of the CSV if required. */
@@ -77,6 +92,8 @@ public class GCSToElasticsearch {
    * @param args Command line arguments to the pipeline.
    */
   public static void main(String[] args) {
+    UncaughtExceptionLogger.register();
+
     GCSToElasticsearchOptions options =
         PipelineOptionsFactory.fromArgs(args).withValidation().as(GCSToElasticsearchOptions.class);
 

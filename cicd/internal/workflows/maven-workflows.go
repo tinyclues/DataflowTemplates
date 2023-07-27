@@ -17,10 +17,10 @@
 package workflows
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/GoogleCloudPlatform/DataflowTemplates/cicd/internal/flags"
@@ -31,15 +31,19 @@ import (
 const (
 	// mvn commands
 	cleanInstallCmd  = "clean install"
+	cleanVerifyCmd   = "clean verify"
+	cleanTestCmd     = "clean test"
+	verifyCmd        = "verify"
 	spotlessCheckCmd = "spotless:check"
 
 	// regexes
 	javaFileRegex     = "\\.java$"
+	xmlFileRegex      = "\\.xml$"
 	markdownFileRegex = "\\.md$"
 	pomFileRegex      = "pom\\.xml$"
 
 	// notable files
-	unifiedPom = "unified-templates.xml"
+	unifiedPom = "pom.xml"
 )
 
 // Interface for retrieving flags that can be passed into the workflow's
@@ -51,7 +55,17 @@ type MavenFlags interface {
 	SkipDependencyAnalysis() string
 	SkipJib() string
 	SkipTests() string
+	SkipJacoco() string
+	SkipShade() string
+	SkipSpotlessCheck() string
+	SkipIntegrationTests() string
 	FailAtTheEnd() string
+	RunIntegrationTests() string
+	RunIntegrationSmokeTests() string
+	RunLoadTests() string
+	ThreadCount(int) string
+	IntegrationTestParallelism(int) string
+	StaticBigtableInstance(string) string
 }
 
 type mvnFlags struct{}
@@ -80,8 +94,48 @@ func (*mvnFlags) SkipTests() string {
 	return "-Dmaven.test.skip"
 }
 
+func (*mvnFlags) SkipJacoco() string {
+	return "-Djacoco.skip"
+}
+
+func (*mvnFlags) SkipShade() string {
+	return "-DskipShade"
+}
+
+func (*mvnFlags) SkipSpotlessCheck() string {
+	return "-Dspotless.check.skip"
+}
+
+func (*mvnFlags) SkipIntegrationTests() string {
+	return "-DskipIntegrationTests"
+}
+
 func (*mvnFlags) FailAtTheEnd() string {
 	return "-fae"
+}
+
+func (*mvnFlags) RunIntegrationTests() string {
+	return "-PtemplatesIntegrationTests"
+}
+
+func (*mvnFlags) RunIntegrationSmokeTests() string {
+	return "-PtemplatesIntegrationSmokeTests"
+}
+
+func (*mvnFlags) RunLoadTests() string {
+	return "-PtemplatesLoadTests"
+}
+
+func (*mvnFlags) ThreadCount(count int) string {
+	return "-T" + strconv.Itoa(count)
+}
+
+func (*mvnFlags) IntegrationTestParallelism(count int) string {
+	return "-DitParallelism=" + strconv.Itoa(count)
+}
+
+func (*mvnFlags) StaticBigtableInstance(instanceID string) string {
+	return "-DbigtableInstanceId=" + instanceID
 }
 
 func NewMavenFlags() MavenFlags {
@@ -95,17 +149,65 @@ func MvnCleanInstall() Workflow {
 }
 
 func (*mvnCleanInstallWorkflow) Run(args ...string) error {
-	flags.RegisterCommonFlags()
-	flag.Parse()
+	return RunForChangedModules(cleanInstallCmd, args...)
+}
 
-	changed := flags.ChangedFiles(javaFileRegex, pomFileRegex)
+type mvnCleanInstallAllWorkflow struct{}
+
+func MvnCleanInstallAll() Workflow {
+	return &mvnCleanInstallAllWorkflow{}
+}
+
+func (*mvnCleanInstallAllWorkflow) Run(args ...string) error {
+	return op.RunMavenOnPom(unifiedPom, cleanInstallCmd, args...)
+}
+
+type mvnCleanTestWorkflow struct{}
+
+func MvnCleanTest() Workflow {
+	return &mvnCleanTestWorkflow{}
+}
+
+func (*mvnCleanTestWorkflow) Run(args ...string) error {
+	return RunForChangedModules(cleanTestCmd, args...)
+}
+
+type mvnCleanVerifyWorkflow struct{}
+
+func MvnCleanVerify() Workflow {
+	return &mvnCleanVerifyWorkflow{}
+}
+
+func (*mvnCleanVerifyWorkflow) Run(args ...string) error {
+	return RunForChangedModules(cleanVerifyCmd, args...)
+}
+
+type mvnVerifyWorkflow struct{}
+
+func MvnVerify() Workflow {
+	return &mvnVerifyWorkflow{}
+}
+
+func (*mvnVerifyWorkflow) Run(args ...string) error {
+	return RunForChangedModules(verifyCmd, args...)
+}
+
+func RunForChangedModules(cmd string, args ...string) error {
+	changed := flags.ChangedFiles(javaFileRegex, xmlFileRegex)
 	if len(changed) == 0 {
 		return nil
 	}
 
 	// Collect the modules together for a single call. Maven can work out the install order.
 	modules := make([]string, 0)
+
+	// We need to append the base dependency modules, because they are needed to build all
+	// other modules.
+	build_syndeo := false
 	for root, children := range repo.GetModulesForPaths(changed) {
+		if root == "syndeo-template" {
+			build_syndeo = true
+		}
 		if len(children) == 0 {
 			modules = append(modules, root)
 			continue
@@ -138,7 +240,36 @@ func (*mvnCleanInstallWorkflow) Run(args ...string) error {
 		return nil
 	}
 
-	return op.RunMavenOnModule(unifiedPom, cleanInstallCmd, strings.Join(modules, ","), args...)
+	has_it := false
+	has_common := false
+	has_v2 := false
+	for _, module := range modules {
+		if len(module) > 1 && module[:2] == "it" {
+			has_it = true
+		}
+		if module == "v2/common" {
+			has_common = true
+		}
+		if module == "v2" {
+			has_v2 = true
+		}
+	}
+	if has_it && !has_common {
+		modules = append(modules, "v2/common")
+	}
+	if (has_v2 || has_common) && !has_it {
+		modules = append(modules, "it")
+	}
+
+	modules = append(modules, "plugins/templates-maven-plugin")
+
+	if !build_syndeo {
+		args = append(args, "-P-oss-build")
+	} else {
+		args = append(args, "-Poss-build")
+	}
+
+	return op.RunMavenOnModule(unifiedPom, cmd, strings.Join(modules, ","), args...)
 }
 
 type spotlessCheckWorkflow struct{}
@@ -148,26 +279,7 @@ func SpotlessCheck() Workflow {
 }
 
 func (*spotlessCheckWorkflow) Run(args ...string) error {
-	flags.RegisterCommonFlags()
-	flag.Parse()
-
-	changed := flags.ChangedFiles(javaFileRegex, markdownFileRegex)
-	if len(changed) == 0 {
-		return nil
-	}
-
-	modules := make([]string, 0)
-	for root, children := range repo.GetModulesForPaths(changed) {
-		if len(children) == 0 || (len(children) == 1 && children[0] == "") {
-			modules = append(modules, root)
-			continue
-		}
-		for _, c := range children {
-			modules = append(modules, fmt.Sprintf("%s/%s", root, c))
-		}
-	}
-
-	return op.RunMavenOnModule(unifiedPom, spotlessCheckCmd, strings.Join(modules, ","), args...)
+	return RunForChangedModules(spotlessCheckCmd, args...)
 }
 
 // Removes root and returns results. This may reorder the input.

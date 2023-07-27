@@ -36,8 +36,9 @@ public class Datastream
   // Note: Leave this static initializer at the top of the file.
   static {
     com.google.api.client.util.Preconditions.checkState(
-        com.google.api.client.googleapis.GoogleUtils.MAJOR_VERSION == 1
-            && com.google.api.client.googleapis.GoogleUtils.MINOR_VERSION >= 15,
+        com.google.api.client.googleapis.GoogleUtils.MAJOR_VERSION > 1
+            || (com.google.api.client.googleapis.GoogleUtils.MAJOR_VERSION == 1
+                && com.google.api.client.googleapis.GoogleUtils.MINOR_VERSION >= 15),
         "You are currently running with version %s of google-api-client. "
             + "You need at least version 1.15 of google-api-client to run version "
             + "1.25.0-SNAPSHOT of the Datastream API library.",
@@ -107,7 +108,9 @@ public class Datastream
     this(new Builder(transport, jsonFactory, httpRequestInitializer));
   }
 
-  /** @param builder builder */
+  /**
+   * @param builder builder
+   */
   Datastream(Builder builder) {
     super(builder);
   }
@@ -356,6 +359,7 @@ public class Datastream
           return (FetchStaticIps) super.set(parameterName, value);
         }
       }
+
       /**
        * Gets information about a location.
        *
@@ -505,6 +509,7 @@ public class Datastream
           return (Get) super.set(parameterName, value);
         }
       }
+
       /**
        * Lists information about the supported locations for this service.
        *
@@ -981,6 +986,7 @@ public class Datastream
             return (Create) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to delete a connection profile.
          *
@@ -1166,6 +1172,7 @@ public class Datastream
             return (Delete) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to discover a connection profile. The discover API call exposes the data
          * objects and metadata belonging to the profile. Typically, a request returns children data
@@ -1334,6 +1341,7 @@ public class Datastream
             return (Discover) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to get details about a connection profile.
          *
@@ -1488,6 +1496,7 @@ public class Datastream
             return (Get) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to list connection profiles created in a project and location.
          *
@@ -1721,6 +1730,7 @@ public class Datastream
             return (List) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to update the parameters of a connection profile.
          *
@@ -1981,6 +1991,7 @@ public class Datastream
           }
         }
       }
+
       /**
        * An accessor for creating requests from the Operations collection.
        *
@@ -2161,6 +2172,7 @@ public class Datastream
             return (Cancel) super.set(parameterName, value);
           }
         }
+
         /**
          * Deletes a long-running operation. This method indicates that the client is no longer
          * interested in the operation result. It does not cancel the operation. If the server
@@ -2305,6 +2317,7 @@ public class Datastream
             return (Delete) super.set(parameterName, value);
           }
         }
+
         /**
          * Gets the latest state of a long-running operation. Clients can use this method to poll
          * the operation result at intervals as recommended by the API service.
@@ -2459,6 +2472,7 @@ public class Datastream
             return (Get) super.set(parameterName, value);
           }
         }
+
         /**
          * Lists operations that match the specified filter in the request. If the server doesn't
          * support this method, it returns `UNIMPLEMENTED`. NOTE: the `name` binding allows API
@@ -2669,6 +2683,7 @@ public class Datastream
           }
         }
       }
+
       /**
        * An accessor for creating requests from the PrivateConnections collection.
        *
@@ -2894,6 +2909,7 @@ public class Datastream
             return (Create) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to delete a private connectivity configuration.
          *
@@ -3102,6 +3118,7 @@ public class Datastream
             return (Delete) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to get details about a private connectivity configuration.
          *
@@ -3256,6 +3273,7 @@ public class Datastream
             return (Get) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to list private connectivity configurations in a project and location.
          *
@@ -3725,6 +3743,7 @@ public class Datastream
               return (Create) super.set(parameterName, value);
             }
           }
+
           /**
            * Use this method to delete a route.
            *
@@ -3911,6 +3930,7 @@ public class Datastream
               return (Delete) super.set(parameterName, value);
             }
           }
+
           /**
            * Use this method to get details about a route.
            *
@@ -4065,6 +4085,7 @@ public class Datastream
               return (Get) super.set(parameterName, value);
             }
           }
+
           /**
            * Use this method to list routes created for a private connectivity configuration in a
            * project and location.
@@ -4304,6 +4325,7 @@ public class Datastream
           }
         }
       }
+
       /**
        * An accessor for creating requests from the Streams collection.
        *
@@ -4563,6 +4585,7 @@ public class Datastream
             return (Create) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to delete a stream.
          *
@@ -4747,6 +4770,7 @@ public class Datastream
             return (Delete) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to get details about a stream.
          *
@@ -4899,6 +4923,7 @@ public class Datastream
             return (Get) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to list streams in a project and location.
          *
@@ -5129,6 +5154,7 @@ public class Datastream
             return (List) super.set(parameterName, value);
           }
         }
+
         /**
          * Use this method to update the configuration of a stream.
          *
@@ -5558,6 +5584,7 @@ public class Datastream
               return (Get) super.set(parameterName, value);
             }
           }
+
           /**
            * Use this method to list the objects of a specific stream.
            *
@@ -5761,6 +5788,7 @@ public class Datastream
               return (List) super.set(parameterName, value);
             }
           }
+
           /**
            * Use this method to look up a stream object by its source object identifier.
            *
@@ -5911,6 +5939,7 @@ public class Datastream
               return (Lookup) super.set(parameterName, value);
             }
           }
+
           /**
            * Use this method to start a backfill job for the specified stream object.
            *
@@ -6065,6 +6094,7 @@ public class Datastream
               return (StartBackfillJob) super.set(parameterName, value);
             }
           }
+
           /**
            * Use this method to stop a backfill job for the specified stream object.
            *

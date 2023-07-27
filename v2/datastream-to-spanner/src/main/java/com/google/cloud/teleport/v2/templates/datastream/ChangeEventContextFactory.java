@@ -16,7 +16,7 @@
 package com.google.cloud.teleport.v2.templates.datastream;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.google.cloud.teleport.v2.templates.spanner.ddl.Ddl;
+import com.google.cloud.teleport.v2.spanner.ddl.Ddl;
 
 /** Factory classes that provides creation methods for ChangeEventContext. */
 public class ChangeEventContextFactory {
@@ -52,6 +52,8 @@ public class ChangeEventContextFactory {
       return new MySqlChangeEventContext(changeEvent, ddl, shadowTablePrefix);
     } else if (DatastreamConstants.ORACLE_SOURCE_TYPE.equals(sourceType)) {
       return new OracleChangeEventContext(changeEvent, ddl, shadowTablePrefix);
+    } else if (DatastreamConstants.POSTGRES_SOURCE_TYPE.equals(sourceType)) {
+      return new PostgresChangeEventContext(changeEvent, ddl, shadowTablePrefix);
     }
 
     throw new InvalidChangeEventException("Unsupported source database: " + sourceType);

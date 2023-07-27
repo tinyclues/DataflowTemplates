@@ -15,6 +15,7 @@
  */
 package com.google.cloud.syndeo.common;
 
+import com.google.cloud.syndeo.transforms.SyndeoStatsSchemaTransformProvider;
 import com.google.cloud.syndeo.v1.SyndeoV1.ConfiguredSchemaTransform;
 import java.util.Collection;
 import java.util.HashMap;
@@ -23,6 +24,7 @@ import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
+import org.apache.beam.sdk.schemas.Schema;
 import org.apache.beam.sdk.schemas.Schema.FieldType;
 import org.apache.beam.sdk.schemas.SchemaTranslation;
 import org.apache.beam.sdk.schemas.transforms.SchemaTransform;
@@ -33,6 +35,8 @@ import org.apache.beam.sdk.values.Row;
 public class ProviderUtil {
 
   public static final Map<String, SchemaTransformProvider> PROVIDERS = loadProviders();
+  public static final String ERRORS_TAG = "errors";
+  public static final String OUTPUT_TAG = "output";
 
   /** Load providers, including bringing in one for SchemaIOs. */
   private static Map<String, SchemaTransformProvider> loadProviders() {
@@ -72,8 +76,19 @@ public class ProviderUtil {
       if (provider == null) {
         throw new RuntimeException(inputId + " not found ");
       }
-      configuration =
-          Row.withSchema(provider.configurationSchema()).addValues(configurationAsList).build();
+      try {
+        configuration =
+            Row.withSchema(provider.configurationSchema()).addValues(configurationAsList).build();
+      } catch (ClassCastException | IllegalArgumentException e) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Given config schema %s, and configuration %s, we're unable to configure transform.",
+                provider.configurationSchema().getFields().stream()
+                    .map(Schema.Field::getName)
+                    .collect(Collectors.toList()),
+                configurationAsList),
+            e);
+      }
     }
 
     public TransformSpec(ConfiguredSchemaTransform schemaTransform) {
@@ -87,7 +102,8 @@ public class ProviderUtil {
           SchemaUtil.addNullsToMatchSchema(
               (Row)
                   SchemaTranslation.rowFromProto(
-                      ProtoTranslation.fromSyndeoProtos(schemaTransform.getConfigurationValues()),
+                      SyndeoApiProtoTranslation.fromSyndeoProtos(
+                          schemaTransform.getConfigurationValues()),
                       FieldType.row(provider.configurationSchema())),
               provider.configurationSchema());
     }
@@ -95,9 +111,9 @@ public class ProviderUtil {
     public ConfiguredSchemaTransform toProto() {
       ConfiguredSchemaTransform.Builder inst = ConfiguredSchemaTransform.newBuilder();
       inst.setConfigurationValues(
-          ProtoTranslation.toSyndeoProtos(SchemaTranslation.rowToProto(configuration)));
+          SyndeoApiProtoTranslation.toSyndeoProtos(SchemaTranslation.rowToProto(configuration)));
       inst.setConfigurationOptions(
-          ProtoTranslation.toSyndeoProtos(
+          SyndeoApiProtoTranslation.toSyndeoProtos(
               SchemaTranslation.schemaToProto(configuration.getSchema(), true)));
       inst.setTransformUrn(inputId);
       return inst.build();
@@ -107,17 +123,45 @@ public class ProviderUtil {
   /** Applies the given configs. */
   public static PCollectionRowTuple applyConfigs(
       Collection<TransformSpec> specs, PCollectionRowTuple tuple) {
+    TransformSpec dlqTransformSpec = null;
+    for (TransformSpec spec : specs) {
+      String[] arrOfUrn = spec.inputId.split(":", 0);
+      if (arrOfUrn[arrOfUrn.length - 2].contains("dlq")) {
+        dlqTransformSpec = spec;
+        specs.remove(dlqTransformSpec);
+        break;
+      }
+    }
     for (TransformSpec spec : specs) {
       SchemaTransform transform = spec.provider.from(spec.configuration);
       // We know we only deal with transforms with either 0 or 1 input so we know how to connect the
       // collections. To sanity check we should confirm the output collections match expected.
-      if (tuple.getAll().size() == 1) {
+      if (tuple.getAll().size() == 1 || tuple.getAll().containsKey(OUTPUT_TAG)) {
         String input = spec.provider.inputCollectionNames().get(0);
-        String priorOutput = tuple.getAll().keySet().stream().findFirst().get();
+        // TODO(pabloem): Check this logic.
+        String priorOutput =
+            tuple.getAll().size() == 1
+                ? tuple.getAll().keySet().stream().findFirst().get()
+                : OUTPUT_TAG;
         tuple = PCollectionRowTuple.of(input, tuple.get(priorOutput));
       }
 
-      tuple = tuple.apply(spec.inputId, transform.buildTransform());
+      tuple = tuple.apply(spec.inputId, transform);
+
+      if (tuple.getAll().containsKey(ERRORS_TAG)) {
+        PCollectionRowTuple.of("input", tuple.get(ERRORS_TAG))
+            .apply(
+                new SyndeoStatsSchemaTransformProvider()
+                    .from(
+                        SyndeoStatsSchemaTransformProvider.SyndeoStatsConfiguration.create(
+                            "errors")));
+        if (dlqTransformSpec != null) {
+          PCollectionRowTuple.of("errors", tuple.get(ERRORS_TAG))
+              .apply(
+                  dlqTransformSpec.inputId,
+                  dlqTransformSpec.provider.from(dlqTransformSpec.configuration));
+        }
+      }
     }
     return tuple;
   }

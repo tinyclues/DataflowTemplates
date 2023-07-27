@@ -18,12 +18,21 @@ package com.google.cloud.teleport.v2.templates;
 import static com.google.cloud.teleport.v2.kafka.transforms.KafkaTransform.readFromKafka;
 
 import com.google.api.services.bigquery.model.TableRow;
+import com.google.cloud.teleport.metadata.Template;
+import com.google.cloud.teleport.metadata.TemplateCategory;
+import com.google.cloud.teleport.metadata.TemplateParameter;
 import com.google.cloud.teleport.v2.coders.FailsafeElementCoder;
+import com.google.cloud.teleport.v2.common.UncaughtExceptionLogger;
 import com.google.cloud.teleport.v2.kafka.options.KafkaReadOptions;
+import com.google.cloud.teleport.v2.options.BigQueryStorageApiStreamingOptions;
+import com.google.cloud.teleport.v2.templates.KafkaToBigQuery.KafkaToBQOptions;
 import com.google.cloud.teleport.v2.transforms.BigQueryConverters.FailsafeJsonToTableRow;
 import com.google.cloud.teleport.v2.transforms.ErrorConverters;
 import com.google.cloud.teleport.v2.transforms.ErrorConverters.WriteKafkaMessageErrors;
 import com.google.cloud.teleport.v2.transforms.JavascriptTextTransformer.FailsafeJavascriptUdf;
+import com.google.cloud.teleport.v2.transforms.JavascriptTextTransformer.JavascriptTextTransformerOptions;
+import com.google.cloud.teleport.v2.utils.BigQueryIOUtils;
+import com.google.cloud.teleport.v2.utils.MetadataValidator;
 import com.google.cloud.teleport.v2.utils.SchemaUtils;
 import com.google.cloud.teleport.v2.values.FailsafeElement;
 import com.google.common.collect.ImmutableMap;
@@ -43,7 +52,6 @@ import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition;
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryInsertError;
 import org.apache.beam.sdk.io.gcp.bigquery.InsertRetryPolicy;
 import org.apache.beam.sdk.io.gcp.bigquery.WriteResult;
-import org.apache.beam.sdk.options.Description;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
 import org.apache.beam.sdk.options.Validation.Required;
 import org.apache.beam.sdk.transforms.DoFn;
@@ -77,67 +85,23 @@ import org.slf4j.LoggerFactory;
  *   <li>The Kafka brokers are reachable from the Dataflow worker machines.
  * </ul>
  *
- * <p><b>Example Usage</b>
- *
- * <pre>
- *
- * # Set some environment variables
- * PROJECT=my-project
- * TEMP_BUCKET=my-temp-bucket
- * OUTPUT_TABLE=${PROJECT}:my_dataset.my_table
- * TOPICS=my-topics
- * JS_PATH=my-js-path-on-gcs
- * JS_FUNC_NAME=my-js-func-name
- * BOOTSTRAP=my-comma-separated-bootstrap-servers
- *
- * # Set containerization vars
- * IMAGE_NAME=my-image-name
- * TARGET_GCR_IMAGE=gcr.io/${PROJECT}/${IMAGE_NAME}
- * BASE_CONTAINER_IMAGE=my-base-container-image
- * BASE_CONTAINER_IMAGE_VERSION=my-base-container-image-version
- * APP_ROOT=/path/to/app-root
- * COMMAND_SPEC=/path/to/command-spec
- *
- * # Build and upload image
- * mvn clean package \
- * -Dimage=${TARGET_GCR_IMAGE} \
- * -Dbase-container-image=${BASE_CONTAINER_IMAGE} \
- * -Dbase-container-image.version=${BASE_CONTAINER_IMAGE_VERSION} \
- * -Dapp-root=${APP_ROOT} \
- * -Dcommand-spec=${COMMAND_SPEC}
- *
- * # Create an image spec in GCS that contains the path to the image
- * {
- *    "docker_template_spec": {
- *       "docker_image": $TARGET_GCR_IMAGE
- *     }
- *  }
- *
- * # Execute template:
- * API_ROOT_URL="https://dataflow.googleapis.com"
- * TEMPLATES_LAUNCH_API="${API_ROOT_URL}/v1b3/projects/${PROJECT}/templates:launch"
- * JOB_NAME="kafka-to-bigquery`date +%Y%m%d-%H%M%S-%N`"
- *
- * time curl -X POST -H "Content-Type: application/json"     \
- *     -H "Authorization: Bearer $(gcloud auth print-access-token)" \
- *     "${TEMPLATES_LAUNCH_API}"`
- *     `"?validateOnly=false"`
- *     `"&dynamicTemplate.gcsPath=${TEMP_BUCKET}/path/to/image-spec"`
- *     `"&dynamicTemplate.stagingLocation=${TEMP_BUCKET}/staging" \
- *     -d '
- *      {
- *       "jobName":"'$JOB_NAME'",
- *       "parameters": {
- *           "outputTableSpec":"'$OUTPUT_TABLE'",
- *           "inputTopics":"'$TOPICS'",
- *           "javascriptTextTransformGcsPath":"'$JS_PATH'",
- *           "javascriptTextTransformFunctionName":"'$JS_FUNC_NAME'",
- *           "bootstrapServers":"'$BOOTSTRAP'"
- *        }
- *       }
- *      '
- * </pre>
+ * <p>Check out <a
+ * href="https://github.com/GoogleCloudPlatform/DataflowTemplates/blob/main/v2/kafka-to-bigquery/README_Kafka_to_BigQuery.md">README</a>
+ * for instructions on how to use or modify this template.
  */
+@Template(
+    name = "Kafka_to_BigQuery",
+    category = TemplateCategory.STREAMING,
+    displayName = "Kafka to BigQuery",
+    description =
+        "A streaming pipeline which ingests data in JSON format from Kafka, performs a transform"
+            + " via a user defined JavaScript function, and writes to a pre-existing BigQuery"
+            + " table.",
+    optionsClass = KafkaToBQOptions.class,
+    flexContainerName = "kafka-to-bigquery",
+    documentation =
+        "https://cloud.google.com/dataflow/docs/guides/templates/provided/kafka-to-bigquery",
+    contactInformation = "https://cloud.google.com/support")
 public class KafkaToBigQuery {
 
   /* Logger for class. */
@@ -170,9 +134,17 @@ public class KafkaToBigQuery {
    * The {@link KafkaToBQOptions} class provides the custom execution options passed by the executor
    * at the command-line.
    */
-  public interface KafkaToBQOptions extends KafkaReadOptions {
+  public interface KafkaToBQOptions
+      extends KafkaReadOptions,
+          JavascriptTextTransformerOptions,
+          BigQueryStorageApiStreamingOptions {
 
-    @Description("Table spec to write the output to")
+    @TemplateParameter.BigQueryTable(
+        order = 1,
+        description = "BigQuery output table",
+        helpText =
+            "BigQuery table location to write the output to. The name should be in the format "
+                + "<project>:<dataset>.<table_name>. The table's schema must match input objects.")
     @Required
     String getOutputTableSpec();
 
@@ -184,7 +156,13 @@ public class KafkaToBigQuery {
      * @deprecated This method is no longer acceptable to get bootstrap servers.
      *     <p>Use {@link KafkaToBQOptions#getReadBootstrapServers()} instead.
      */
-    @Description("Kafka Bootstrap Servers")
+    @TemplateParameter.Text(
+        order = 2,
+        optional = true,
+        regexes = {"[,:a-zA-Z0-9._-]+"},
+        description = "Kafka Bootstrap Server list",
+        helpText = "Kafka Bootstrap Server list, separated by commas.",
+        example = "localhost:9092,127.0.0.1:9093")
     @Deprecated
     String getBootstrapServers();
 
@@ -192,7 +170,7 @@ public class KafkaToBigQuery {
      * Get bootstrap server across releases.
      *
      * @deprecated This method is no longer acceptable to set bootstrap servers.
-     *     <p>Use {@link KafkaToBQOptions#setReadBootstrapServers()} instead.
+     *     <p>Use {@link KafkaToBQOptions#setReadBootstrapServers(String)} instead.
      */
     @Deprecated
     void setBootstrapServers(String bootstrapServers);
@@ -204,7 +182,13 @@ public class KafkaToBigQuery {
      *     <p>Use {@link KafkaToBQOptions#getKafkaReadTopics()} instead.
      */
     @Deprecated
-    @Description("Kafka topic(s) to read the input from")
+    @TemplateParameter.Text(
+        order = 3,
+        optional = true,
+        regexes = {"[,a-zA-Z0-9._-]+"},
+        description = "Kafka topic(s) to read the input from",
+        helpText = "Kafka topic(s) to read the input from.",
+        example = "topic1,topic2")
     String getInputTopics();
 
     /**
@@ -216,22 +200,18 @@ public class KafkaToBigQuery {
     @Deprecated
     void setInputTopics(String inputTopics);
 
-    @Description(
-        "The dead-letter table to output to within BigQuery in <project-id>:<dataset>.<table> "
-            + "format. If it doesn't exist, it will be created during pipeline execution.")
+    @TemplateParameter.BigQueryTable(
+        order = 4,
+        optional = true,
+        description = "The dead-letter table name to output failed messages to BigQuery",
+        helpText =
+            "Messages failed to reach the output table for all kind of reasons (e.g., mismatched"
+                + " schema, malformed json) are written to this table. If it doesn't exist, it will"
+                + " be created during pipeline execution.",
+        example = "your-project-id:your-dataset.your-table-name")
     String getOutputDeadletterTable();
 
     void setOutputDeadletterTable(String outputDeadletterTable);
-
-    @Description("Gcs path to javascript udf source")
-    String getJavascriptTextTransformGcsPath();
-
-    void setJavascriptTextTransformGcsPath(String javascriptTextTransformGcsPath);
-
-    @Description("UDF Javascript Function Name")
-    String getJavascriptTextTransformFunctionName();
-
-    void setJavascriptTextTransformFunctionName(String javascriptTextTransformFunctionName);
   }
 
   /**
@@ -243,6 +223,8 @@ public class KafkaToBigQuery {
    * @param args The command-line args passed by the executor.
    */
   public static void main(String[] args) {
+    UncaughtExceptionLogger.register();
+
     KafkaToBQOptions options =
         PipelineOptionsFactory.fromArgs(args).withValidation().as(KafkaToBQOptions.class);
 
@@ -259,6 +241,10 @@ public class KafkaToBigQuery {
    * @return The pipeline result.
    */
   public static PipelineResult run(KafkaToBQOptions options) {
+
+    // Validate BQ STORAGE_WRITE_API options
+    BigQueryIOUtils.validateBQStorageApiOptionsStreaming(options);
+    MetadataValidator.validate(options);
 
     // Create the pipeline
     Pipeline pipeline = Pipeline.create(options);
@@ -330,7 +316,6 @@ public class KafkaToBigQuery {
                     .withCreateDisposition(CreateDisposition.CREATE_NEVER)
                     .withWriteDisposition(WriteDisposition.WRITE_APPEND)
                     .withExtendedErrorInfo()
-                    .withMethod(BigQueryIO.Write.Method.STREAMING_INSERTS)
                     .withFailedInsertRetryPolicy(InsertRetryPolicy.retryTransientErrors())
                     .to(options.getOutputTableSpec()));
 
@@ -339,8 +324,7 @@ public class KafkaToBigQuery {
      * Elements that failed inserts into BigQuery are extracted and converted to FailsafeElement
      */
     PCollection<FailsafeElement<String, String>> failedInserts =
-        writeResult
-            .getFailedInsertsWithErr()
+        BigQueryIOUtils.writeResultToBigQueryInsertErrors(writeResult, options)
             .apply(
                 "WrapInsertionErrors",
                 MapElements.into(FAILSAFE_ELEMENT_CODER.getEncodedTypeDescriptor())

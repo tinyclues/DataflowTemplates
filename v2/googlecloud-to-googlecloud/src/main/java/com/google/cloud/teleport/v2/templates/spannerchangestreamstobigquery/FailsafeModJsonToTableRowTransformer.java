@@ -15,10 +15,14 @@
  */
 package com.google.cloud.teleport.v2.templates.spannerchangestreamstobigquery;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.api.gax.grpc.GrpcCallContext;
 import com.google.api.gax.rpc.ApiCallContext;
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.auto.value.AutoValue;
+import com.google.cloud.spanner.DatabaseClient;
+import com.google.cloud.spanner.Dialect;
 import com.google.cloud.spanner.Key.Builder;
 import com.google.cloud.spanner.KeySet;
 import com.google.cloud.spanner.Options;
@@ -48,6 +52,7 @@ import java.util.stream.Collectors;
 import org.apache.beam.sdk.io.gcp.spanner.SpannerAccessor;
 import org.apache.beam.sdk.io.gcp.spanner.SpannerConfig;
 import org.apache.beam.sdk.io.gcp.spanner.changestreams.model.ModType;
+import org.apache.beam.sdk.io.gcp.spanner.changestreams.model.ValueCaptureType;
 import org.apache.beam.sdk.transforms.DoFn;
 import org.apache.beam.sdk.transforms.PTransform;
 import org.apache.beam.sdk.transforms.ParDo;
@@ -56,8 +61,6 @@ import org.apache.beam.sdk.values.PCollectionTuple;
 import org.apache.beam.sdk.values.TupleTag;
 import org.apache.beam.sdk.values.TupleTagList;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Throwables;
-import org.codehaus.jackson.map.ObjectMapper;
-import org.codehaus.jackson.node.ObjectNode;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -122,6 +125,7 @@ public final class FailsafeModJsonToTableRowTransformer {
       public TupleTag<TableRow> transformOut;
       public TupleTag<FailsafeElement<String, String>> transformDeadLetterOut;
       private transient CallContextConfigurator callContextConfigurator;
+      private transient boolean seenException;
 
       public FailsafeModJsonToTableRowFn(
           SpannerConfig spannerConfig,
@@ -155,11 +159,13 @@ public final class FailsafeModJsonToTableRowTransformer {
 
       @Setup
       public void setUp() {
+        Dialect dialect = getDialect(spannerConfig);
         spannerAccessor = SpannerAccessor.getOrCreate(spannerConfig);
         spannerTableByName =
-            new SpannerUtils(spannerAccessor.getDatabaseClient(), spannerChangeStream)
+            new SpannerUtils(spannerAccessor.getDatabaseClient(), spannerChangeStream, dialect)
                 .getSpannerTableByName();
         setUpCallContextConfigurator();
+        seenException = false;
       }
 
       @Teardown
@@ -180,6 +186,11 @@ public final class FailsafeModJsonToTableRowTransformer {
           }
           context.output(tableRow);
         } catch (Exception e) {
+          if (!seenException) {
+            LOG.error(
+                "Caught exception when processing element , storing into dead letter queue {}", e);
+            seenException = true;
+          }
           context.output(
               transformDeadLetterOut,
               FailsafeElement.of(failsafeModJsonString)
@@ -208,7 +219,7 @@ public final class FailsafeModJsonToTableRowTransformer {
         BigQueryUtils.setMetadataFiledsOfTableRow(
             spannerTableName, mod, modJsonString, spannerCommitTimestamp, tableRow);
         JSONObject keysJsonObject = new JSONObject(mod.getKeysJson());
-        // Set Spanner key columns of of the tableRow.
+        // Set Spanner key columns of the tableRow.
         for (TrackedSpannerColumn spannerColumn : spannerTable.getPkColumns()) {
           String spannerColumnName = spannerColumn.getName();
           if (keysJsonObject.has(spannerColumnName)) {
@@ -230,6 +241,11 @@ public final class FailsafeModJsonToTableRowTransformer {
 
         // For "INSERT" mod, we can get all columns from mod.
         if (mod.getModType() == ModType.INSERT) {
+          return tableRow;
+        }
+
+        // For "NEW_ROW" value capture type, we can get all columns from mod.
+        if (mod.getValueCaptureType() == ValueCaptureType.NEW_ROW) {
           return tableRow;
         }
 
@@ -274,6 +290,7 @@ public final class FailsafeModJsonToTableRowTransformer {
           } catch (Exception e) {
             // Retry for maximum 3 times in case of transient error.
             if (retryCount > 3) {
+              LOG.error("Caught exception from Spanner snapshot read: {}, throwing", e);
               throw e;
             } else {
               LOG.error(
@@ -359,5 +376,10 @@ public final class FailsafeModJsonToTableRowTransformer {
 
       abstract FailsafeModJsonToTableRowOptions build();
     }
+  }
+
+  private static Dialect getDialect(SpannerConfig spannerConfig) {
+    DatabaseClient databaseClient = SpannerAccessor.getOrCreate(spannerConfig).getDatabaseClient();
+    return databaseClient.getDialect();
   }
 }

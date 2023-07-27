@@ -27,10 +27,11 @@ import com.google.cloud.spanner.Struct;
 import com.google.cloud.teleport.v2.coders.FailsafeElementCoder;
 import com.google.cloud.teleport.v2.spanner.IntegrationTest;
 import com.google.cloud.teleport.v2.spanner.SpannerServerResource;
+import com.google.cloud.teleport.v2.spanner.ddl.Ddl;
+import com.google.cloud.teleport.v2.spanner.ddl.InformationSchemaScanner;
+import com.google.cloud.teleport.v2.spanner.migrations.schema.Schema;
 import com.google.cloud.teleport.v2.templates.datastream.DatastreamConstants;
 import com.google.cloud.teleport.v2.templates.spanner.ProcessInformationSchema;
-import com.google.cloud.teleport.v2.templates.spanner.ddl.Ddl;
-import com.google.cloud.teleport.v2.templates.spanner.ddl.InformationSchemaScanner;
 import com.google.cloud.teleport.v2.values.FailsafeElement;
 import java.util.Arrays;
 import org.apache.beam.sdk.PipelineResult;
@@ -139,16 +140,18 @@ public class SpannerStreamingWriteIntegrationTest {
 
   private void constructAndRunPipeline(PCollection<FailsafeElement<String, String>> jsonRecords) {
     String shadowTablePrefix = "shadow";
-    SpannerConfig sourceConfig = spannerServer.getSpannerConfig(testDb);
+    SpannerConfig spannerConfig = spannerServer.getSpannerConfig(testDb);
     PCollection<Ddl> ddl =
         testPipeline.apply(
             "Process Information Schema",
-            new ProcessInformationSchema(sourceConfig, true, shadowTablePrefix, "oracle"));
+            new ProcessInformationSchema(spannerConfig, true, shadowTablePrefix, "oracle"));
     PCollectionView<Ddl> ddlView = ddl.apply("Cloud Spanner DDL as view", View.asSingleton());
+    Schema schema = new Schema();
 
     jsonRecords.apply(
         "Write events to Cloud Spanner",
-        new SpannerTransactionWriter(sourceConfig, ddlView, shadowTablePrefix, "oracle"));
+        new SpannerTransactionWriter(
+            spannerConfig, ddlView, schema, null, shadowTablePrefix, "oracle", false, true));
 
     PipelineResult testResult = testPipeline.run();
     testResult.waitUntilFinish();

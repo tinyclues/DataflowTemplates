@@ -25,9 +25,12 @@ import com.google.cloud.bigquery.BigQuery;
 import com.google.cloud.bigquery.BigQueryOptions;
 import com.google.cloud.bigquery.DatasetId;
 import com.google.cloud.bigquery.storage.v1beta1.BigQueryStorageClient;
+import com.google.cloud.teleport.metadata.Template;
+import com.google.cloud.teleport.metadata.TemplateCategory;
 import com.google.cloud.teleport.v2.clients.DataplexClient;
 import com.google.cloud.teleport.v2.clients.DataplexClientFactory;
 import com.google.cloud.teleport.v2.clients.DefaultDataplexClient;
+import com.google.cloud.teleport.v2.common.UncaughtExceptionLogger;
 import com.google.cloud.teleport.v2.options.DataplexBigQueryToGcsOptions;
 import com.google.cloud.teleport.v2.transforms.BigQueryTableToGcsTransform;
 import com.google.cloud.teleport.v2.transforms.DataplexBigQueryToGcsUpdateMetadata;
@@ -79,10 +82,20 @@ import org.slf4j.LoggerFactory;
  * by name, filtering tables and partitions by modification time, deleting data in BigQuery after
  * export.
  *
- * <p>Please refer to <a href=
- * "https://github.com/GoogleCloudPlatform/DataflowTemplates/blob/master/v2/googlecloud-to-googlecloud/docs/DataplexBigQueryToGcs/README.md">
- * README</a> for further information.
+ * <p>Check out <a
+ * href="https://github.com/GoogleCloudPlatform/DataflowTemplates/blob/main/v2/googlecloud-to-googlecloud/README_Dataplex_BigQuery_to_GCS.md">README</a>
+ * for instructions on how to use or modify this template.
  */
+@Template(
+    name = "Dataplex_BigQuery_to_GCS",
+    category = TemplateCategory.BATCH,
+    displayName = "Dataplex: Tier Data from BigQuery to Cloud Storage",
+    description =
+        "A pipeline that exports all tables from a BigQuery dataset to Cloud Storage, registering"
+            + " metadata for the newly created files in Dataplex.",
+    optionsClass = DataplexBigQueryToGcsOptions.class,
+    flexContainerName = "dataplex-bigquery-to-gcs",
+    contactInformation = "https://cloud.google.com/support")
 public class DataplexBigQueryToGcs {
 
   private static final Logger LOG = LoggerFactory.getLogger(DataplexBigQueryToGcs.class);
@@ -95,6 +108,7 @@ public class DataplexBigQueryToGcs {
    */
   public static void main(String[] args)
       throws IOException, InterruptedException, ExecutionException {
+    UncaughtExceptionLogger.register();
 
     DataplexBigQueryToGcsOptions options =
         PipelineOptionsFactory.fromArgs(args)
@@ -358,7 +372,17 @@ public class DataplexBigQueryToGcs {
       throws IOException {
 
     LOG.info("Resolving asset: {}", assetName);
-    GoogleCloudDataplexV1Asset asset = dataplex.getAsset(assetName);
+
+    GoogleCloudDataplexV1Asset asset;
+    try {
+      asset = dataplex.getAsset(assetName);
+    } catch (Throwable e) {
+      LOG.error("Error resolving Dataplex Asset {}", assetName, e);
+      throw e;
+    }
+
+    LOG.info("Asset {} resolved! {}", assetName, asset);
+
     checkNotNull(asset.getResourceSpec(), "Asset has no ResourceSpec.");
 
     String type = asset.getResourceSpec().getType();

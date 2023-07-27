@@ -17,19 +17,25 @@
 package main
 
 import (
+	"flag"
 	"log"
 
+	"github.com/GoogleCloudPlatform/DataflowTemplates/cicd/internal/flags"
 	"github.com/GoogleCloudPlatform/DataflowTemplates/cicd/internal/workflows"
 )
 
 func main() {
+	flags.RegisterCommonFlags()
+	flag.Parse()
+
 	mvnFlags := workflows.NewMavenFlags()
-	err := workflows.MvnCleanInstall().Run(
-		mvnFlags.IncludeDependencies(),
-		mvnFlags.IncludeDependents(),
+	err := workflows.MvnCleanInstallAll().Run(
 		mvnFlags.SkipDependencyAnalysis(), // TODO(zhoufek): Fix our dependencies then remove this flag
 		mvnFlags.SkipJib(),
-		mvnFlags.SkipTests())
+		mvnFlags.SkipShade(),
+		mvnFlags.SkipSpotlessCheck(),
+		mvnFlags.SkipTests(),
+		mvnFlags.ThreadCount(8))
 	if err != nil {
 		log.Fatalf("%v\n", err)
 	}

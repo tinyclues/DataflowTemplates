@@ -74,8 +74,8 @@ import org.slf4j.impl.StaticLoggerBinder;
  * -jar App.jar /users/home/myuser/config/my_dataflow_cdc.properties
  * /users/home/myuser/config/my_password.properties}
  *
- * <p>The connector also expects <b>Google Cloud credential configuration</b> to be passed via: *
- * The {@literal GOOGLE_APPLICATION_CREDENTIALS} environment set to point to a JSON credential with
+ * <p>The connector also expects <b>Google Cloud credential configuration</b> to be passed via: The
+ * {@literal GOOGLE_APPLICATION_CREDENTIALS} environment set to point to a JSON credential with
  * access to PubSub, and Data Catalog.
  */
 public class App {
@@ -95,7 +95,11 @@ public class App {
 
   public static final String DEFAULT_RDBMS = "mysql";
 
-  public static void main(String[] args) throws Exception {
+  public static void main(String[] args) throws ConfigurationException {
+    setup(args).run();
+  }
+
+  public static DebeziumToPubSubDataSender setup(String[] args) throws ConfigurationException {
     final Logger logger = LoggerFactory.getLogger(App.class);
 
     // Printing the information about the bindings for SLF4J:
@@ -117,7 +121,7 @@ public class App {
     // Properties to be passed directly to Debezium
     ImmutableConfiguration debeziumConfig = config.immutableSubset("debezium");
 
-    startSender(
+    return createSender(
         checkParsing(config.getString("databaseName"), "databaseName", logger),
         checkParsing(config.getString("databaseUsername"), "databaseUsername", logger),
         checkParsing(config.getString("databasePassword"), "databasePassword", logger),
@@ -169,18 +173,26 @@ public class App {
    *
    * <p>This method has the following scenarios:
    *
-   * <p>* Get the main properties file: * If zero arguments are passed, it uses the default
-   * properties file location. * If more than zero arguments are passed, it uses the first argument
-   * to get a properties file. * If necessary, get the password file: * If the first properties file
-   * does not contain the "databasePassword" property, then it tries to read the second properties
-   * file, which only contains the database password. * If less than 2 arguments are passed, then
-   * use the default password file location. * If 2 arguments are passed, it uses the second
-   * argument to get a password file. * Add the "databasePassword" property from this file to the
-   * main configuration.
+   * <p>Get the main properties file:
    *
-   * @param args are the arguments passed to the application via the console.
-   * @return
-   * @throws ConfigurationException
+   * <p>If zero arguments are passed, it uses the default properties file location.
+   *
+   * <p>If more than zero arguments are passed, it uses the first argument to get a properties file.
+   *
+   * <p>If necessary, get the password file:
+   *
+   * <p>If the first properties file does not contain the "databasePassword" property, then it tries
+   * to read the second properties file, which only contains the database password.
+   *
+   * <p>If less than 2 arguments are passed, then use the default password file location.
+   *
+   * <p>If 2 arguments are passed, it uses the second argument to get a password file.
+   *
+   * <p>Add the "databasePassword" property from this file to the main configuration.
+   *
+   * @param args the arguments passed to the application via the console.
+   * @return Configuration instance.
+   * @throws ConfigurationException if there is an error when parsing configuration file.
    */
   static Configuration getConnectorConfiguration(String[] args) throws ConfigurationException {
     Configurations configs = new Configurations();
@@ -199,7 +211,7 @@ public class App {
     return result;
   }
 
-  static void startSender(
+  static DebeziumToPubSubDataSender createSender(
       String databaseName,
       String databaseUserName,
       String databasePassword,
@@ -228,22 +240,20 @@ public class App {
         "Please provide a databaseManagementSystem parameter."
             + " This can be either mysql or postgres. Got %s",
         rdbms);
-    DebeziumToPubSubDataSender dataSender =
-        new DebeziumToPubSubDataSender(
-            databaseName,
-            databaseUserName,
-            databasePassword,
-            databaseAddress,
-            Integer.parseInt(databasePort),
-            gcpProject,
-            gcpPubsubTopic,
-            offsetStorageFile,
-            databaseHistoryFile,
-            inMemoryOffsetStorage,
-            singleTopicMode,
-            new HashSet<>(Arrays.asList(commaSeparatedWhiteListedTables.split(","))),
-            rdbms,
-            debeziumConfig);
-    dataSender.run();
+    return new DebeziumToPubSubDataSender(
+        databaseName,
+        databaseUserName,
+        databasePassword,
+        databaseAddress,
+        Integer.parseInt(databasePort),
+        gcpProject,
+        gcpPubsubTopic,
+        offsetStorageFile,
+        databaseHistoryFile,
+        inMemoryOffsetStorage,
+        singleTopicMode,
+        new HashSet<>(Arrays.asList(commaSeparatedWhiteListedTables.split(","))),
+        rdbms,
+        debeziumConfig);
   }
 }

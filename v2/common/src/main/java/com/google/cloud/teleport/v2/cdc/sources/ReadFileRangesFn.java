@@ -21,6 +21,7 @@ import java.util.concurrent.Semaphore;
 import org.apache.beam.sdk.io.BoundedSource;
 import org.apache.beam.sdk.io.CompressedSource;
 import org.apache.beam.sdk.io.FileBasedSource;
+import org.apache.beam.sdk.io.FileIO;
 import org.apache.beam.sdk.io.FileIO.ReadableFile;
 import org.apache.beam.sdk.io.fs.ResourceId;
 import org.apache.beam.sdk.io.range.OffsetRange;
@@ -104,7 +105,7 @@ public class ReadFileRangesFn<T> extends DoFn<ReadableFile, T> implements Serial
      * if the exception should be thrown.
      */
     public boolean apply(ReadableFile file, OffsetRange range, Exception e) {
-      LOG.error("Avro File Read Failure {}", file.getMetadata().resourceId().toString());
+      LOG.error("Avro File Read Failure {} {}", file.getMetadata().resourceId(), e);
       return false;
       // return true;
     }

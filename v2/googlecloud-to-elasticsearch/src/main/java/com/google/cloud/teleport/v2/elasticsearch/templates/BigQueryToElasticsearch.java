@@ -15,10 +15,14 @@
  */
 package com.google.cloud.teleport.v2.elasticsearch.templates;
 
+import com.google.cloud.teleport.metadata.Template;
+import com.google.cloud.teleport.metadata.TemplateCategory;
+import com.google.cloud.teleport.v2.common.UncaughtExceptionLogger;
 import com.google.cloud.teleport.v2.elasticsearch.options.BigQueryToElasticsearchOptions;
 import com.google.cloud.teleport.v2.elasticsearch.transforms.WriteToElasticsearch;
-import com.google.cloud.teleport.v2.transforms.BigQueryConverters.ReadBigQuery;
+import com.google.cloud.teleport.v2.transforms.BigQueryConverters.ReadBigQueryTableRows;
 import com.google.cloud.teleport.v2.transforms.BigQueryConverters.TableRowToJsonFn;
+import com.google.cloud.teleport.v2.transforms.JavascriptTextTransformer.TransformTextViaJavascript;
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.PipelineResult;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
@@ -27,10 +31,21 @@ import org.apache.beam.sdk.transforms.ParDo;
 /**
  * The {@link BigQueryToElasticsearch} pipeline exports data from a BigQuery table to Elasticsearch.
  *
- * <p>Please refer to <b><a href=
- * "https://github.com/GoogleCloudPlatform/DataflowTemplates/blob/master/v2/googlecloud-to-elasticsearch/docs/BigQueryToElasticsearch/README.md">
- * README.md</a></b> for further information.
+ * <p>Check out <a
+ * href="https://github.com/GoogleCloudPlatform/DataflowTemplates/blob/main/v2/googlecloud-to-elasticsearch/README_BigQuery_to_Elasticsearch.md">README</a>
+ * for instructions on how to use or modify this template.
  */
+@Template(
+    name = "BigQuery_to_Elasticsearch",
+    category = TemplateCategory.BATCH,
+    displayName = "BigQuery to Elasticsearch",
+    description =
+        "A pipeline which sends BigQuery records into an Elasticsearch instance as json documents.",
+    optionsClass = BigQueryToElasticsearchOptions.class,
+    flexContainerName = "bigquery-to-elasticsearch",
+    documentation =
+        "https://cloud.google.com/dataflow/docs/guides/templates/provided/bigquery-to-elasticsearch",
+    contactInformation = "https://cloud.google.com/support")
 public class BigQueryToElasticsearch {
   /**
    * Main entry point for pipeline execution.
@@ -38,6 +53,8 @@ public class BigQueryToElasticsearch {
    * @param args Command line arguments to the pipeline.
    */
   public static void main(String[] args) {
+    UncaughtExceptionLogger.register();
+
     BigQueryToElasticsearchOptions options =
         PipelineOptionsFactory.fromArgs(args)
             .withValidation()
@@ -67,7 +84,7 @@ public class BigQueryToElasticsearch {
     pipeline
         .apply(
             "ReadFromBigQuery",
-            ReadBigQuery.newBuilder()
+            ReadBigQueryTableRows.newBuilder()
                 .setOptions(options.as(BigQueryToElasticsearchOptions.class))
                 .build())
 
@@ -77,7 +94,16 @@ public class BigQueryToElasticsearch {
         .apply("TableRowsToJsonDocument", ParDo.of(new TableRowToJsonFn()))
 
         /*
-         * Step #3: Write converted records to Elasticsearch
+         * Step #3: Apply UDF functions (if specified)
+         */
+        .apply(
+            TransformTextViaJavascript.newBuilder()
+                .setFileSystemPath(options.getJavascriptTextTransformGcsPath())
+                .setFunctionName(options.getJavascriptTextTransformFunctionName())
+                .build())
+
+        /*
+         * Step #4: Write converted records to Elasticsearch
          */
         .apply(
             "WriteToElasticsearch",

@@ -15,8 +15,14 @@
  */
 package com.google.cloud.teleport.v2.templates;
 
+import com.google.cloud.teleport.metadata.Template;
+import com.google.cloud.teleport.metadata.TemplateCategory;
+import com.google.cloud.teleport.metadata.TemplateParameter;
+import com.google.cloud.teleport.metadata.TemplateParameter.TemplateEnumOption;
 import com.google.cloud.teleport.v2.cdc.sources.DataStreamIO;
+import com.google.cloud.teleport.v2.common.UncaughtExceptionLogger;
 import com.google.cloud.teleport.v2.io.CdcJdbcIO;
+import com.google.cloud.teleport.v2.templates.DataStreamToSQL.Options;
 import com.google.cloud.teleport.v2.transforms.CreateDml;
 import com.google.cloud.teleport.v2.transforms.ProcessDml;
 import com.google.cloud.teleport.v2.values.DmlInfo;
@@ -28,7 +34,6 @@ import java.util.Map;
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.PipelineResult;
 import org.apache.beam.sdk.options.Default;
-import org.apache.beam.sdk.options.Description;
 import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
 import org.apache.beam.sdk.options.StreamingOptions;
@@ -40,34 +45,25 @@ import org.slf4j.LoggerFactory;
 /**
  * This pipeline ingests DataStream data from GCS. The data is then cleaned and converted from JSON
  * objects into DML statements. The DML is applied to the desired target database, which can be one
- * of MySQL or POstgreSQL. Replication maintains a 1:1 match between source and target by default.
+ * of MySQL or PostgreSQL. Replication maintains a 1:1 match between source and target by default.
  * No DDL is supported in the current version of this pipeline.
  *
- * <p>NOTE: Future versiosn will support: Pub/Sub, GCS, or Kafka as per DataStream
+ * <p>NOTE: Future versions will support: Pub/Sub, GCS, or Kafka as per DataStream
  *
- * <p>Example Usage: TODO: FIX EXMAPLE USAGE
- *
- * <pre>
- * mvn compile exec:java \
- * -Dexec.mainClass=com.google.cloud.teleport.templates.${PIPELINE_NAME} \
- * -Dexec.cleanupDaemonThreads=false \
- * -Dexec.args=" \
- * --project=${PROJECT_ID} \
- * --stagingLocation=gs://${PROJECT_ID}/dataflow/pipelines/${PIPELINE_FOLDER}/staging \
- * --tempLocation=gs://${PROJECT_ID}/dataflow/pipelines/${PIPELINE_FOLDER}/temp \
- * --templateLocation=gs://$BUCKET_NAME/templates/${PIPELINE_NAME}.json \
- * --gcsPubSubSubscription="projects/<project-id>/subscriptions/<subscription-name>" \
- * --inputFilePattern=${GCS_AVRO_FILE_PATTERN} \
- * --outputProjectId=${OUTPUT_PROJECT_ID} \
- * --runner=(DirectRunner|DataflowRunner)"
- *
- * OPTIONAL Dataflow Params:
- * --autoscalingAlgorithm=THROUGHPUT_BASED \
- * --numWorkers=2 \
- * --maxNumWorkers=10 \
- * --workerMachineType=n1-highcpu-4 \
- * </pre>
+ * <p>Check out <a
+ * href="https://github.com/GoogleCloudPlatform/DataflowTemplates/blob/main/v2/datastream-to-sql/README_Cloud_Datastream_to_SQL.md">README</a>
+ * for instructions on how to use or modify this template.
  */
+@Template(
+    name = "Cloud_Datastream_to_SQL",
+    category = TemplateCategory.STREAMING,
+    displayName = "Datastream to SQL",
+    description =
+        "Streaming pipeline. Ingests messages from a stream in Cloud Datastream, transforms them,"
+            + " and writes them to a set of pre-defined Postgres tables.",
+    optionsClass = Options.class,
+    flexContainerName = "datastream-to-sql",
+    contactInformation = "https://cloud.google.com/support")
 public class DataStreamToSQL {
 
   private static final Logger LOG = LoggerFactory.getLogger(DataStreamToSQL.class);
@@ -80,85 +76,151 @@ public class DataStreamToSQL {
    * <p>Inherits standard configuration options.
    */
   public interface Options extends PipelineOptions, StreamingOptions {
-    @Description("The GCS location of the avro files you'd like to process")
+    @TemplateParameter.Text(
+        order = 1,
+        description = "File location for Datastream file input in Cloud Storage.",
+        helpText =
+            "This is the file location for Datastream file input in Cloud Storage. Normally, this"
+                + " will be gs://${BUCKET}/${ROOT_PATH}/.")
     String getInputFilePattern();
 
     void setInputFilePattern(String value);
 
-    @Description(
-        "The Pub/Sub subscription with DataStream file notifications."
-            + "The name should be in the format of "
-            + "projects/<project-id>/subscriptions/<subscription-name>.")
+    @TemplateParameter.PubsubSubscription(
+        order = 2,
+        optional = true,
+        description = "The Pub/Sub subscription being used in a Cloud Storage notification policy.",
+        helpText =
+            "The Pub/Sub subscription being used in a Cloud Storage notification policy. The name"
+                + " should be in the format of"
+                + " projects/<project-id>/subscriptions/<subscription-name>.")
     String getGcsPubSubSubscription();
 
     void setGcsPubSubSubscription(String value);
 
-    @Description("The GCS output format avro/json")
+    @TemplateParameter.Enum(
+        order = 3,
+        enumOptions = {@TemplateEnumOption("avro"), @TemplateEnumOption("json")},
+        optional = true,
+        description = "Datastream output file format (avro/json).",
+        helpText =
+            "This is the format of the output file produced by Datastream. by default this will be"
+                + " avro.")
     @Default.String("avro")
     String getInputFileFormat();
 
     void setInputFileFormat(String value);
 
-    @Description("The DataStream Stream to Reference.")
+    @TemplateParameter.Text(
+        order = 4,
+        optional = true,
+        description = "Name or template for the stream to poll for schema information.",
+        helpText =
+            "This is the name or template for the stream to poll for schema information. Default is"
+                + " {_metadata_stream}. The default value is enough under most conditions.")
     String getStreamName();
 
     void setStreamName(String value);
 
-    @Description(
-        "The starting DateTime used to fetch from GCS (https://tools.ietf.org/html/rfc3339).")
+    @TemplateParameter.DateTime(
+        order = 5,
+        optional = true,
+        description =
+            "The starting DateTime used to fetch from Cloud Storage "
+                + "(https://tools.ietf.org/html/rfc3339).",
+        helpText =
+            "The starting DateTime used to fetch from Cloud Storage "
+                + "(https://tools.ietf.org/html/rfc3339).")
     @Default.String("1970-01-01T00:00:00.00Z")
     String getRfcStartDateTime();
 
     void setRfcStartDateTime(String value);
 
     // DataStream API Root Url (only used for testing)
-    @Description("DataStream API Root Url (only used for testing)")
+    @TemplateParameter.Text(
+        order = 6,
+        optional = true,
+        description = "Datastream API Root URL (only required for testing)",
+        helpText = "Datastream API Root URL")
     @Default.String("https://datastream.googleapis.com/")
     String getDataStreamRootUrl();
 
     void setDataStreamRootUrl(String value);
 
     // SQL Connection Parameters
-    @Description("Database Type (postgres or mysql)")
+    @TemplateParameter.Enum(
+        order = 7,
+        optional = true,
+        enumOptions = {@TemplateEnumOption("postgres"), @TemplateEnumOption("mysql")},
+        description = "SQL Database Type (postgres or mysql).",
+        helpText = "The database type to write to (for example, Postgres).")
     @Default.String("postgres")
     String getDatabaseType();
 
     void setDatabaseType(String value);
 
-    @Description("Database Host")
+    @TemplateParameter.Text(
+        order = 8,
+        description = "Database Host to connect on.",
+        helpText = "Database Host to connect on.")
     String getDatabaseHost();
 
     void setDatabaseHost(String value);
 
-    @Description("Database Port")
+    @TemplateParameter.Text(
+        order = 9,
+        optional = true,
+        description = "Database Port to connect on.",
+        helpText = "Database Port to connect on (default 5432).")
     @Default.String("5432")
     String getDatabasePort();
 
     void setDatabasePort(String value);
 
-    @Description("Database User")
+    @TemplateParameter.Text(
+        order = 10,
+        description = "Database User to connect with.",
+        helpText = "Database User to connect with.")
     String getDatabaseUser();
 
     void setDatabaseUser(String value);
 
-    @Description("Database Password")
+    @TemplateParameter.Password(
+        order = 11,
+        description = "Database Password for given user.",
+        helpText = "Database Password for given user.")
     String getDatabasePassword();
 
     void setDatabasePassword(String value);
 
-    @Description("Database Name")
+    @TemplateParameter.Text(
+        order = 12,
+        optional = true,
+        description = "SQL Database Name.",
+        helpText = "The database name to connect to.")
     @Default.String("postgres")
     String getDatabaseName();
 
     void setDatabaseName(String value);
 
-    @Description("Schema Naming Map")
+    @TemplateParameter.Text(
+        order = 13,
+        optional = true,
+        description = "A map of key/values used to dictate schema name changes",
+        helpText =
+            "A map of key/values used to dictate schema name changes (ie."
+                + " old_name:new_name,CaseError:case_error)")
     @Default.String("")
     String getSchemaMap();
 
     void setSchemaMap(String value);
 
-    @Description("[Optional] Custom connection string")
+    @TemplateParameter.Text(
+        order = 14,
+        optional = true,
+        description = "Custom connection string.",
+        helpText =
+            "Optional connection string which will be used instead of the default database string.")
     @Default.String("")
     String getCustomConnectionString();
 
@@ -171,6 +233,8 @@ public class DataStreamToSQL {
    * @param args The command-line arguments to the pipeline.
    */
   public static void main(String[] args) {
+    UncaughtExceptionLogger.register();
+
     LOG.info("Starting Datastream to SQL");
 
     Options options = PipelineOptionsFactory.fromArgs(args).withValidation().as(Options.class);

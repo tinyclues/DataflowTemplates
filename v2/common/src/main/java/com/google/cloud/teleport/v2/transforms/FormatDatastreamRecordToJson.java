@@ -15,6 +15,9 @@
  */
 package com.google.cloud.teleport.v2.transforms;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.cloud.teleport.v2.values.FailsafeElement;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -29,16 +32,15 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.apache.avro.Conversions.DecimalConversion;
 import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 import org.apache.avro.Schema.Field;
 import org.apache.avro.data.TimeConversions.DateConversion;
+import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.beam.sdk.transforms.SerializableFunction;
-import org.codehaus.jackson.JsonNode;
-import org.codehaus.jackson.map.ObjectMapper;
-import org.codehaus.jackson.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -122,12 +124,18 @@ public class FormatDatastreamRecordToJson
     outputObject.put("_metadata_table", getMetadataTable(record));
     outputObject.put("_metadata_change_type", getMetadataChangeType(record));
     outputObject.put("_metadata_primary_keys", getPrimaryKeys(record));
+    outputObject.put("_metadata_uuid", getUUID());
 
     if (sourceType.equals("mysql")) {
       // MySQL Specific Metadata
       outputObject.put("_metadata_schema", getMetadataDatabase(record));
       outputObject.put("_metadata_log_file", getSourceMetadata(record, "log_file"));
       outputObject.put("_metadata_log_position", getSourceMetadata(record, "log_position"));
+    } else if (sourceType.equals("postgresql")) {
+      // Postgres Specific Metadata
+      outputObject.put("_metadata_schema", getMetadataSchema(record));
+      outputObject.put("_metadata_lsn", getPostgresLsn(record));
+      outputObject.put("_metadata_tx_id", getPostgresTxId(record));
     } else {
       // Oracle Specific Metadata
       outputObject.put("_metadata_schema", getMetadataSchema(record));
@@ -156,7 +164,7 @@ public class FormatDatastreamRecordToJson
     ObjectMapper mapper = new ObjectMapper();
     ObjectNode loweredOutputObject = mapper.createObjectNode();
 
-    for (Iterator<String> fieldNames = outputObject.getFieldNames(); fieldNames.hasNext(); ) {
+    for (Iterator<String> fieldNames = outputObject.fieldNames(); fieldNames.hasNext(); ) {
       String fieldName = fieldNames.next();
       loweredOutputObject.put(fieldName.toLowerCase(), outputObject.get(fieldName));
     }
@@ -196,14 +204,14 @@ public class FormatDatastreamRecordToJson
 
   private long getSourceTimestamp(GenericRecord record) {
     long unixTimestampMilli = (long) record.get("source_timestamp");
-    long unixTimestampSec = unixTimestampMilli / 1000;
 
-    return unixTimestampSec;
+    return unixTimestampMilli / 1000;
   }
 
   private String getSourceMetadata(GenericRecord record, String fieldName) {
-    if (((GenericRecord) record.get("source_metadata")).get(fieldName) != null) {
-      return ((GenericRecord) record.get("source_metadata")).get(fieldName).toString();
+    GenericRecord sourceMetadata = (GenericRecord) record.get("source_metadata");
+    if (sourceMetadata.hasField(fieldName) && sourceMetadata.get(fieldName) != null) {
+      return sourceMetadata.get(fieldName).toString();
     }
 
     return null;
@@ -222,8 +230,9 @@ public class FormatDatastreamRecordToJson
   }
 
   private String getMetadataChangeType(GenericRecord record) {
-    if (((GenericRecord) record.get("source_metadata")).get("change_type") != null) {
-      return ((GenericRecord) record.get("source_metadata")).get("change_type").toString();
+    GenericRecord sourceMetadata = (GenericRecord) record.get("source_metadata");
+    if (sourceMetadata.hasField("change_type") && sourceMetadata.get("change_type") != null) {
+      return sourceMetadata.get("change_type").toString();
     }
 
     return null;
@@ -231,19 +240,22 @@ public class FormatDatastreamRecordToJson
 
   private JsonNode getPrimaryKeys(GenericRecord record) {
     GenericRecord sourceMetadata = (GenericRecord) record.get("source_metadata");
-    if (sourceMetadata.get("primary_keys") == null) {
+    if (!sourceMetadata.hasField("primary_keys") || sourceMetadata.get("primary_keys") == null) {
       return null;
     }
 
-    ObjectMapper mapper = new ObjectMapper();
     JsonNode dataInput = getSourceMetadataJson(record);
     return dataInput.get("primary_keys");
+  }
+
+  private String getUUID() {
+    return UUID.randomUUID().toString();
   }
 
   private Boolean getMetadataIsDeleted(GenericRecord record) {
     boolean isDeleted = false;
     GenericRecord sourceMetadata = (GenericRecord) record.get("source_metadata");
-    if (sourceMetadata.get("is_deleted") != null) {
+    if (sourceMetadata.hasField("is_deleted") && sourceMetadata.get("is_deleted") != null) {
       isDeleted = (boolean) sourceMetadata.get("is_deleted");
     }
 
@@ -251,43 +263,78 @@ public class FormatDatastreamRecordToJson
   }
 
   private String getOracleRowId(GenericRecord record) {
-    if (((GenericRecord) record.get("source_metadata")).get("row_id") != null) {
-      return ((GenericRecord) record.get("source_metadata")).get("row_id").toString();
+    GenericRecord sourceMetadata = (GenericRecord) record.get("source_metadata");
+    if (sourceMetadata.hasField("row_id") && sourceMetadata.get("row_id") != null) {
+      return sourceMetadata.get("row_id").toString();
     }
 
     return null;
   }
 
   private Long getOracleScn(GenericRecord record) {
-    if (((GenericRecord) record.get("source_metadata")).get("scn") != null) {
-      return (Long) ((GenericRecord) record.get("source_metadata")).get("scn");
+    GenericRecord sourceMetadata = (GenericRecord) record.get("source_metadata");
+    if (sourceMetadata.hasField("scn") && sourceMetadata.get("scn") != null) {
+      return (Long) sourceMetadata.get("scn");
     }
 
-    return (Long) null;
+    return null;
   }
 
   private Long getOracleSsn(GenericRecord record) {
-    if (((GenericRecord) record.get("source_metadata")).get("ssn") != null) {
-      return (Long) ((GenericRecord) record.get("source_metadata")).get("ssn");
+    // oracle sort keys are a list of four values that are provided in this order:
+    // [timestamp, scn, rs_id, ssn]
+    if (record.hasField("sort_keys")) {
+      return (Long) ((GenericData.Array<?>) record.get("sort_keys")).get(3);
     }
 
-    return (Long) null;
+    GenericRecord sourceMetadata = (GenericRecord) record.get("source_metadata");
+    // oracle sort keys are a list of four values that are provided in this order:
+    // [timestamp, scn, rs_id, ssn]
+    if (sourceMetadata.hasField("ssn") && sourceMetadata.get("ssn") != null) {
+      return (Long) sourceMetadata.get("ssn");
+    }
+
+    return null;
   }
 
   private String getOracleRsId(GenericRecord record) {
-    if (((GenericRecord) record.get("source_metadata")).get("rs_id") != null) {
-      return ((GenericRecord) record.get("source_metadata")).get("rs_id").toString();
+    if (record.hasField("sort_keys")) {
+      return ((GenericData.Array<?>) record.get("sort_keys")).get(2).toString();
     }
 
-    return (String) null;
+    GenericRecord sourceMetadata = (GenericRecord) record.get("source_metadata");
+    if (sourceMetadata.hasField("rs_id") && sourceMetadata.get("rs_id") != null) {
+      return sourceMetadata.get("rs_id").toString();
+    }
+
+    return null;
   }
 
   private String getOracleTxId(GenericRecord record) {
-    if (((GenericRecord) record.get("source_metadata")).get("tx_id") != null) {
-      return ((GenericRecord) record.get("source_metadata")).get("tx_id").toString();
+    GenericRecord sourceMetadata = (GenericRecord) record.get("source_metadata");
+    if (sourceMetadata.hasField("tx_id") && sourceMetadata.get("tx_id") != null) {
+      return sourceMetadata.get("tx_id").toString();
     }
 
-    return (String) null;
+    return null;
+  }
+
+  private String getPostgresLsn(GenericRecord record) {
+    GenericRecord sourceMetadata = (GenericRecord) record.get("source_metadata");
+    if (sourceMetadata.hasField("lsn") && sourceMetadata.get("lsn") != null) {
+      return sourceMetadata.get("lsn").toString();
+    }
+
+    return null;
+  }
+
+  private String getPostgresTxId(GenericRecord record) {
+    GenericRecord sourceMetadata = (GenericRecord) record.get("source_metadata");
+    if (sourceMetadata.hasField("tx_id") && sourceMetadata.get("tx_id") != null) {
+      return sourceMetadata.get("tx_id").toString();
+    }
+
+    return null;
   }
 
   static class UnifiedTypesFormatter {
@@ -313,7 +360,7 @@ public class FormatDatastreamRecordToJson
           jsonObject.put(fieldName, (byte[]) record.get(fieldName));
           break;
         case FLOAT:
-          String value = ((Float) record.get(fieldName)).toString();
+          String value = record.get(fieldName).toString();
           jsonObject.put(fieldName, Double.valueOf(value));
           break;
         case DOUBLE:
@@ -366,12 +413,10 @@ public class FormatDatastreamRecordToJson
         String fieldName, Schema fieldSchema, GenericRecord element, ObjectNode jsonObject) {
       // TODO(pabloem) Actually test this.
       if (fieldSchema.getLogicalType() instanceof LogicalTypes.Date) {
-        org.joda.time.LocalDate date =
+        LocalDate date =
             DATE_CONVERSION.fromInt(
                 (Integer) element.get(fieldName), fieldSchema, fieldSchema.getLogicalType());
-        LocalDate javaDate =
-            LocalDate.of(date.getYear(), date.getMonthOfYear(), date.getDayOfMonth());
-        jsonObject.put(fieldName, javaDate.format(DEFAULT_DATE_FORMATTER));
+        jsonObject.put(fieldName, date.format(DEFAULT_DATE_FORMATTER));
       } else if (fieldSchema.getLogicalType() instanceof LogicalTypes.Decimal) {
         BigDecimal bigDecimal =
             FormatDatastreamRecordToJson.DECIMAL_CONVERSION.fromBytes(

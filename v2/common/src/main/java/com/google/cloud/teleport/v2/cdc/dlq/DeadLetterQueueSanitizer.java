@@ -15,11 +15,11 @@
  */
 package com.google.cloud.teleport.v2.cdc.dlq;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import org.apache.beam.sdk.transforms.SimpleFunction;
-import org.codehaus.jackson.JsonNode;
-import org.codehaus.jackson.map.ObjectMapper;
-import org.codehaus.jackson.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,8 +43,8 @@ public class DeadLetterQueueSanitizer<InputT, OutputT> extends SimpleFunction<In
   @Override
   public OutputT apply(InputT input) {
     // Extract details required for DLQ Storage
-    String rawJson = getJsonMessage(input);
-    String errorMessageJson = getErrorMessageJson(input);
+    String rawJson = getJsonMessage(input) == null ? "" : getJsonMessage(input);
+    String errorMessageJson = getErrorMessageJson(input) == null ? "" : getErrorMessageJson(input);
 
     return formatMessage(rawJson, errorMessageJson);
   }

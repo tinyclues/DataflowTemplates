@@ -22,6 +22,13 @@ import com.google.cloud.bigquery.storage.v1beta1.ReadOptions.TableReadOptions;
 import com.google.cloud.bigquery.storage.v1beta1.Storage.CreateReadSessionRequest;
 import com.google.cloud.bigquery.storage.v1beta1.Storage.ReadSession;
 import com.google.cloud.bigquery.storage.v1beta1.TableReferenceProto;
+import com.google.cloud.teleport.metadata.Template;
+import com.google.cloud.teleport.metadata.TemplateCategory;
+import com.google.cloud.teleport.metadata.TemplateParameter;
+import com.google.cloud.teleport.v2.common.UncaughtExceptionLogger;
+import com.google.cloud.teleport.v2.templates.BigQueryToParquet.BigQueryToParquetOptions;
+import com.google.common.base.Splitter;
+import com.google.common.base.Strings;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
@@ -38,11 +45,9 @@ import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.TypedRead.Method;
 import org.apache.beam.sdk.io.gcp.bigquery.SchemaAndRecord;
 import org.apache.beam.sdk.io.parquet.ParquetIO;
 import org.apache.beam.sdk.options.Default;
-import org.apache.beam.sdk.options.Description;
 import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
 import org.apache.beam.sdk.options.Validation.Required;
-import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Splitter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,68 +55,21 @@ import org.slf4j.LoggerFactory;
  * The {@link BigQueryToParquet} pipeline exports data from a BigQuery table to Parquet file(s) in a
  * Google Cloud Storage bucket.
  *
- * <p><b>Pipeline Requirements</b>
- *
- * <ul>
- *   <li>BigQuery Table exists.
- *   <li>Google Cloud Storage bucket exists.
- * </ul>
- *
- * <p><b>Example Usage</b>
- *
- * <pre>
- * # Set the pipeline vars
- * PROJECT=my-project
- * BUCKET_NAME=my-bucket
- * TABLE={$PROJECT}:my-dataset.my-table
- *
- * # Set containerization vars
- * IMAGE_NAME=my-image-name
- * TARGET_GCR_IMAGE=gcr.io/${PROJECT}/${IMAGE_NAME}
- * BASE_CONTAINER_IMAGE=my-base-container-image
- * BASE_CONTAINER_IMAGE_VERSION=my-base-container-image-version
- * APP_ROOT=/path/to/app-root
- * COMMAND_SPEC=/path/to/command-spec
- *
- * # Build and upload image
- * mvn clean package \
- * -Dimage=${TARGET_GCR_IMAGE} \
- * -Dbase-container-image=${BASE_CONTAINER_IMAGE} \
- * -Dbase-container-image.version=${BASE_CONTAINER_IMAGE_VERSION} \
- * -Dapp-root=${APP_ROOT} \
- * -Dcommand-spec=${COMMAND_SPEC}
- *
- * # Create an image spec in GCS that contains the path to the image
- * {
- *    "docker_template_spec": {
- *       "docker_image": $TARGET_GCR_IMAGE
- *     }
- *  }
- *
- * # Execute template:
- * API_ROOT_URL="https://dataflow.googleapis.com"
- * TEMPLATES_LAUNCH_API="${API_ROOT_URL}/v1b3/projects/${PROJECT}/templates:launch"
- * JOB_NAME="bigquery-to-parquet-`date +%Y%m%d-%H%M%S-%N`"
- *
- * time curl -X POST -H "Content-Type: application/json"     \
- *     -H "Authorization: Bearer $(gcloud auth print-access-token)" \
- *     "${TEMPLATES_LAUNCH_API}"`
- *     `"?validateOnly=false"`
- *     `"&dynamicTemplate.gcsPath=${BUCKET_NAME}/path/to/image-spec"`
- *     `"&dynamicTemplate.stagingLocation=${BUCKET_NAME}/staging" \
- *     -d '
- *      {
- *       "jobName":"'$JOB_NAME'",
- *       "parameters": {
- *           "tableRef":"'$TABLE'",
- *           "bucket":"'$BUCKET_NAME/results'",
- *           "numShards":"5",
- *           "fields":"field1,field2"
- *        }
- *       }
- *      '
- * </pre>
+ * <p>Check out <a
+ * href="https://github.com/GoogleCloudPlatform/DataflowTemplates/blob/main/v2/bigquery-to-parquet/README_BigQuery_to_Parquet.md">README</a>
+ * for instructions on how to use or modify this template.
  */
+@Template(
+    name = "BigQuery_to_Parquet",
+    category = TemplateCategory.BATCH,
+    displayName = "BigQuery export to Parquet (via Storage API)",
+    description =
+        "A pipeline to export a BigQuery table into Parquet files using the BigQuery Storage API.",
+    optionsClass = BigQueryToParquetOptions.class,
+    flexContainerName = "bigquery-to-parquet",
+    documentation =
+        "https://cloud.google.com/dataflow/docs/guides/templates/provided/bigquery-to-parquet",
+    contactInformation = "https://cloud.google.com/support")
 public class BigQueryToParquet {
 
   /* Logger for class. */
@@ -180,28 +138,61 @@ public class BigQueryToParquet {
    * executor at the command-line.
    */
   public interface BigQueryToParquetOptions extends PipelineOptions {
-    @Description("BigQuery table to export from in the form <project>:<dataset>.<table>")
+    @TemplateParameter.BigQueryTable(
+        order = 1,
+        description = "BigQuery table to export",
+        helpText = "BigQuery table location to export in the format <project>:<dataset>.<table>.",
+        example = "your-project:your-dataset.your-table-name")
     @Required
     String getTableRef();
 
     void setTableRef(String tableRef);
 
-    @Description("GCS bucket to export BigQuery table data to (e.g. gs://mybucket/folder/).")
+    @TemplateParameter.GcsWriteFile(
+        order = 2,
+        description = "Output Cloud Storage file(s)",
+        helpText = "Path and filename prefix for writing output files.",
+        example = "gs://your-bucket/export/")
     @Required
     String getBucket();
 
     void setBucket(String bucket);
 
-    @Description("Optional: Number of shards for output file.")
+    @TemplateParameter.Integer(
+        order = 3,
+        optional = true,
+        description = "Maximum output shards",
+        helpText =
+            "The maximum number of output shards produced when writing. A higher number of shards"
+                + " means higher throughput for writing to Cloud Storage, but potentially higher"
+                + " data aggregation cost across shards when processing output Cloud Storage"
+                + " files.")
     @Default.Integer(0)
     Integer getNumShards();
 
     void setNumShards(Integer numShards);
 
-    @Description("Optional: Comma separated list of fields to select from the table.")
+    @TemplateParameter.Text(
+        order = 4,
+        optional = true,
+        description = "List of field names",
+        helpText = "Comma separated list of fields to select from the table.")
     String getFields();
 
     void setFields(String fields);
+
+    @TemplateParameter.Text(
+        order = 5,
+        optional = true,
+        description = "Row restrictions/filter.",
+        helpText =
+            "Read only rows which match the specified filter, which must be a SQL expression"
+                + " compatible with Google standard SQL"
+                + " (https://cloud.google.com/bigquery/docs/reference/standard-sql). If no value is"
+                + " specified, then all rows are returned.")
+    String getRowRestriction();
+
+    void setRowRestriction(String restriction);
   }
 
   /**
@@ -227,6 +218,8 @@ public class BigQueryToParquet {
    * @param args Command line arguments to the pipeline.
    */
   public static void main(String[] args) {
+    UncaughtExceptionLogger.register();
+
     BigQueryToParquetOptions options =
         PipelineOptionsFactory.fromArgs(args).withValidation().as(BigQueryToParquetOptions.class);
 
@@ -271,6 +264,11 @@ public class BigQueryToParquet {
       List<String> selectedFields = Splitter.on(",").splitToList(options.getFields());
       readFromBQ =
           selectedFields.isEmpty() ? readFromBQ : readFromBQ.withSelectedFields(selectedFields);
+    }
+
+    // Add row restrictions/filter if any.
+    if (!Strings.isNullOrEmpty(options.getRowRestriction())) {
+      readFromBQ = readFromBQ.withRowRestriction(options.getRowRestriction());
     }
 
     /*
